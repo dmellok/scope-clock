@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
+#include <PubSubClient.h>
 #include <time.h>
 #include "protocol.h"     // shared/
 
@@ -28,6 +29,21 @@
 #endif
 #ifndef OTA_PASS
 #define OTA_PASS ""            // empty = unauthenticated; .env should set one
+#endif
+#ifndef MQTT_HOST
+#define MQTT_HOST ""           // empty = run with no broker at all
+#endif
+#ifndef MQTT_PORT
+#define MQTT_PORT "1883"
+#endif
+#ifndef MQTT_USER
+#define MQTT_USER ""
+#endif
+#ifndef MQTT_PASS
+#define MQTT_PASS ""
+#endif
+#ifndef MQTT_PREFIX
+#define MQTT_PREFIX "scopeclock"
 #endif
 
 // Link to the Teensy: the AtomS3U's native USB CDC, plugged into the clock's
@@ -101,6 +117,148 @@ struct [[maybe_unused]] ListBuilder {
   void send() const { sendFrame(proto::Msg::PushList, buf, len); }
 };
 
+// ---- MQTT: where the smarts live -------------------------------------------
+// Everything above this point is mechanism; this is the policy layer. It is on
+// the bridge and not the display MCU on purpose — rule 5, keep the radio off
+// the beam.
+
+static WiFiClient   net;
+static PubSubClient mqtt(net);
+
+static const char* const kFaceNames[] = { "hands", "digital", "cube" };
+constexpr uint8_t kFaceCount = 3;
+static uint8_t  curFace       = 0;
+static uint8_t  curBrightness = 255;
+static uint16_t bannerMs      = 8000;
+
+static String topic(const char* leaf) { return String(MQTT_PREFIX) + "/" + leaf; }
+
+// Parse one scene line into the builder. The text form exists so a scene can be
+// written by hand or by an HA template without anyone encoding binary:
+//   T <x> <y> <scale> <text to end of line>
+//   L <x0> <y0> <x1> <y1>
+//   C <cx> <cy> <r>
+static void sceneLine(ListBuilder& b, const String& ln) {
+  if (ln.length() < 3) return;
+  const char kind = ln[0];
+  int v[4] = {0,0,0,0};
+  int n = 0, i = 1;
+  while (n < 4 && i < (int)ln.length()) {
+    while (i < (int)ln.length() && ln[i] == ' ') ++i;
+    if (i >= (int)ln.length()) break;
+    const int start = i;
+    if (ln[i] == '-') ++i;
+    while (i < (int)ln.length() && isDigit(ln[i])) ++i;
+    if (i == start) break;
+    v[n++] = ln.substring(start, i).toInt();
+    if (kind == 'T' && n == 3) break;      // rest of the line is the string
+  }
+  if (kind == 'T' && n >= 3) {
+    while (i < (int)ln.length() && ln[i] == ' ') ++i;
+    b.text((int16_t)v[0], (int16_t)v[1], (int16_t)v[2], ln.substring(i).c_str());
+  } else if (kind == 'L' && n >= 4) {
+    b.line((int16_t)v[0], (int16_t)v[1], (int16_t)v[2], (int16_t)v[3]);
+  } else if (kind == 'C' && n >= 3) {
+    b.circle((int16_t)v[0], (int16_t)v[1], (int16_t)v[2]);
+  }
+}
+
+static void publishState() {
+  mqtt.publish(topic("face/state").c_str(), kFaceNames[curFace], true);
+  char b[8]; snprintf(b, sizeof b, "%u", curBrightness);
+  mqtt.publish(topic("brightness/state").c_str(), b, true);
+}
+
+static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
+  String msg;
+  msg.reserve(len);
+  for (unsigned i = 0; i < len; ++i) msg += (char)payload[i];
+  const String tp(t);
+
+  if (tp == topic("banner/set")) {
+    sendBanner(msg.c_str(), bannerMs);
+  } else if (tp == topic("banner/duration")) {
+    const long v = msg.toInt();
+    if (v > 0 && v <= 60000) bannerMs = (uint16_t)v;
+  } else if (tp == topic("face/set")) {
+    for (uint8_t i = 0; i < kFaceCount; ++i) {
+      if (msg.equalsIgnoreCase(kFaceNames[i])) { curFace = i; break; }
+    }
+    sendSetMode(0, curFace);            // 0 = local face
+    publishState();
+  } else if (tp == topic("brightness/set")) {
+    const long v = msg.toInt();
+    curBrightness = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
+    const uint8_t p[1] = { curBrightness };
+    sendFrame(proto::Msg::SetBrightness, p, 1);
+    publishState();
+  } else if (tp == topic("scene/set")) {
+    // Empty payload means "give the clock back to its own face".
+    if (msg.length() == 0) { sendSetMode(0, curFace); return; }
+    ListBuilder b;
+    int start = 0;
+    while (start < (int)msg.length()) {
+      int nl = msg.indexOf('\n', start);
+      if (nl < 0) nl = msg.length();
+      String ln = msg.substring(start, nl);
+      ln.trim();
+      if (ln.length()) sceneLine(b, ln);
+      start = nl + 1;
+    }
+    if (b.count) b.send();
+  }
+}
+
+// Announce ourselves so the clock turns up in Home Assistant as a device with
+// controls, rather than as topics somebody has to write YAML for.
+static void publishDiscovery() {
+  const String avail = topic("availability");
+  const String dev = String("\"dev\":{\"ids\":[\"" MQTT_PREFIX "\"],\"name\":\"Scope Clock\",")
+                   + "\"mf\":\"Cathode Corner\",\"mdl\":\"SCTV\"}";
+  String cfg;
+
+  cfg = String("{\"name\":\"Face\",\"uniq_id\":\"" MQTT_PREFIX "_face\",")
+      + "\"cmd_t\":\"" + topic("face/set") + "\",\"stat_t\":\"" + topic("face/state") + "\","
+      + "\"options\":[\"hands\",\"digital\",\"cube\"],"
+      + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+  mqtt.publish(("homeassistant/select/" MQTT_PREFIX "/face/config"), cfg.c_str(), true);
+
+  cfg = String("{\"name\":\"Brightness\",\"uniq_id\":\"" MQTT_PREFIX "_bri\",")
+      + "\"cmd_t\":\"" + topic("brightness/set") + "\",\"stat_t\":\"" + topic("brightness/state") + "\","
+      + "\"min\":0,\"max\":255,\"mode\":\"slider\","
+      + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+  mqtt.publish(("homeassistant/number/" MQTT_PREFIX "/brightness/config"), cfg.c_str(), true);
+
+  cfg = String("{\"name\":\"Banner\",\"uniq_id\":\"" MQTT_PREFIX "_banner\",")
+      + "\"cmd_t\":\"" + topic("banner/set") + "\","
+      + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+  mqtt.publish(("homeassistant/notify/" MQTT_PREFIX "/banner/config"), cfg.c_str(), true);
+}
+
+static void mqttConnect() {
+  if (!strlen(MQTT_HOST)) return;                 // no broker configured
+  static uint32_t lastTry = 0;
+  if (mqtt.connected() || millis() - lastTry < 5000) return;
+  lastTry = millis();
+
+  const String avail = topic("availability");
+  // Last will, so HA marks the clock unavailable if the bridge drops off
+  // rather than showing stale controls that silently do nothing.
+  const bool ok = strlen(MQTT_USER)
+    ? mqtt.connect(MQTT_PREFIX, MQTT_USER, MQTT_PASS, avail.c_str(), 0, true, "offline")
+    : mqtt.connect(MQTT_PREFIX, avail.c_str(), 0, true, "offline");
+  if (!ok) return;
+
+  mqtt.publish(avail.c_str(), "online", true);
+  publishDiscovery();
+  publishState();
+  mqtt.subscribe(topic("banner/set").c_str());
+  mqtt.subscribe(topic("banner/duration").c_str());
+  mqtt.subscribe(topic("face/set").c_str());
+  mqtt.subscribe(topic("brightness/set").c_str());
+  mqtt.subscribe(topic("scene/set").c_str());
+}
+
 // ---- receive: the device talks back ----------------------------------------
 // Mirror of the device's assembler. Same contiguous CRC, same refusal to
 // believe a length byte that cannot fit.
@@ -149,8 +307,18 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
+  // Power saving costs ~300ms of latency, which is invisible for an hourly
+  // time sync and very visible for a notification that should appear now.
+  WiFi.setSleep(false);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   configTzTime(TZ_POSIX, NTP1);         // NTP + timezone/DST handled here
+
+  if (strlen(MQTT_HOST)) {
+    mqtt.setServer(MQTT_HOST, (uint16_t)atoi(MQTT_PORT));
+    mqtt.setCallback(onMqtt);
+    mqtt.setSocketTimeout(2);           // do not sit on a dead broker
+    mqtt.setBufferSize(768);            // discovery payloads exceed the 256 default
+  }
 }
 
 // Wi-Fi comes and goes, and the clock has to survive that: the device keeps
@@ -187,6 +355,9 @@ void loop() {
   // Blocks only while an update is actually in flight, and the device rides
   // that out on its own RTC — which is the entire point of it keeping time.
   ArduinoOTA.handle();
+
+  mqttConnect();
+  mqtt.loop();
 
   // Sync when the device asks, not merely when our own timer says so.
   //
