@@ -1,5 +1,7 @@
-// hal/link.h — framed serial to the ESP32 bridge (Serial1, pins 0/1).
+// hal/link.h — framed link to the ESP32 bridge over the rear USB-A host jack
+// (this MCU is the USB host, the AtomS3U is a CDC-ACM device).
 // Everything here MUST be non-blocking — the loop is now also the clock.
+// See link_usbhost.cpp for the two USBHost_t36 spin-waits it steers around.
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <stdint.h>

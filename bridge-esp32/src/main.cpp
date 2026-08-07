@@ -12,9 +12,14 @@ static const char* WIFI_PASS = "YOUR_PASS";
 static const char* TZ_POSIX  = "PST8PDT,M3.2.0,M11.1.0";  // host owns TZ + DST
 static const char* NTP1 = "pool.ntp.org";
 
-// UART to the Teensy. On the AtomS3U-in-USB route this is instead the native USB
-// CDC (Serial); on an internal module use a hardware UART (Serial1 + pins).
-#define TO_DISPLAY Serial1
+// Link to the Teensy: the AtomS3U's native USB CDC, plugged into the clock's
+// rear USB-A host jack. The Teensy is the USB host and enumerates us as
+// CDC-ACM, so no wiring is involved.
+//
+// NOTE: this is the same `Serial` the ESP32 uses for its console, so nothing
+// here may print debug text — it would land in the middle of a frame and the
+// device would drop it on the CRC. Use Serial0/UART or a network log instead.
+#define TO_DISPLAY Serial
 
 static void sendFrame(proto::Msg id, const uint8_t* p, uint8_t len) {
   TO_DISPLAY.write(proto::START);
@@ -34,8 +39,7 @@ static void pushLocalTime() {
 }
 
 void setup() {
-  Serial.begin(115200);                 // USB CDC (debug / flashing)
-  TO_DISPLAY.begin(115200, SERIAL_8N1, /*RX=*/44, /*TX=*/43);  // TODO: real pins
+  TO_DISPLAY.begin(115200);             // native USB CDC to the display MCU
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
@@ -48,7 +52,16 @@ void setup() {
 // inconvenience, not an outage. Nothing here blocks waiting for a link.
 void loop() {
   static uint32_t lastSync  = 0;
+  static uint32_t lastPing  = 0;
   static bool     everSynced = false;
+
+  // Heartbeat, so the device can tell "bridge attached but silent" from
+  // "bridge talking". Sent regardless of Wi-Fi: the link being up is a
+  // separate question from the network being up.
+  if (millis() - lastPing > 5000UL) {
+    lastPing = millis();
+    sendFrame(proto::Msg::Ping, nullptr, 0);
+  }
 
   if (WiFi.status() != WL_CONNECTED) return;
 
