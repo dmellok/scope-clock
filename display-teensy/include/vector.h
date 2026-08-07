@@ -42,6 +42,12 @@ void setTrim(int x, int y);        // analog centring pots
 // for nearly the whole refresh period; lower values finish sooner and leave the
 // tube dark for the remainder, which reads as dim and flickery.
 void setBrightness(uint8_t b);
+
+// Feed back how long the last frame actually took, and how long it had. The
+// dwell that produces a given brightness depends on how many dots the frame
+// contains, so it cannot be a constant — this steers it toward filling the
+// refresh period, whatever is being drawn.
+void tuneDwell(uint32_t frameUs, uint32_t budgetUs);
 void updateScreenSaver(int hour);  // nudges the display once an hour, anti-burn-in
 
 } // namespace vec

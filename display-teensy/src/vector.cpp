@@ -53,11 +53,24 @@ int saveX = 0, saveY = 0;
 // every refresh.
 //
 // So the dwell is explicit now, and adjustable, which also gives Msg::Set-
-// Brightness something real to drive. Tuned so a full analog face lands just
-// inside the refresh period: the beam is drawing nearly all the time, which is
-// what keeps a vector display bright and flicker-free.
-constexpr uint32_t kMaxDotDwell = 120;   // CPU cycles per dot at full brightness
-uint32_t dotDwell = kMaxDotDwell;
+// Brightness something real to drive.
+//
+// It also cannot be a fixed constant. What the eye reads as brightness is
+// beam-on time per refresh, and the dwell needed to achieve that depends
+// entirely on how many dots the frame happens to contain: a value tuned so the
+// analog face fills its 16.7ms lands the cube face at 69%, and an arbitrary
+// pushed list anywhere at all. Fix the dwell and every scene is a different
+// brightness.
+//
+// So steer on the measured frame time instead — no dot counting, and it works
+// for content nobody has seen yet. tuneDwell() nudges toward a target fraction
+// of the refresh period; the previous frame is an excellent predictor because
+// scenes change smoothly.
+constexpr uint32_t kDwellCeiling = 600;  // cycles; a sparse frame cannot fill
+                                         // the period without parking the beam
+constexpr uint32_t kTargetPct    = 93;   // of the refresh period, at full
+uint32_t dotDwell   = 120;
+uint8_t  brightness = 255;
 
 inline void dwell() {
   if (!dotDwell) return;
@@ -92,8 +105,22 @@ inline void endStroke() {
 
 } // namespace
 
-void setBrightness(uint8_t b) {
-  dotDwell = (uint32_t)kMaxDotDwell * b / 255;
+void setBrightness(uint8_t b) { brightness = b; }
+
+void tuneDwell(uint32_t frameUs, uint32_t budgetUs) {
+  if (!budgetUs) return;
+  const uint32_t targetUs = (uint64_t)budgetUs * kTargetPct * brightness / (100u * 255u);
+
+  // Proportional, and deliberately gentle: a step per 200us of error settles a
+  // face change in well under a second without hunting around the target.
+  int32_t step = ((int32_t)targetUs - (int32_t)frameUs) / 200;
+  if (step >  8) step =  8;
+  if (step < -8) step = -8;
+  if (step == 0) step = (targetUs > frameUs) ? 1 : (targetUs < frameUs ? -1 : 0);
+
+  const int32_t next = (int32_t)dotDwell + step;
+  dotDwell = next < 0 ? 0
+           : ((uint32_t)next > kDwellCeiling ? kDwellCeiling : (uint32_t)next);
 }
 
 void init() {

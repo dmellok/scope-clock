@@ -92,7 +92,63 @@ void hands(const ClockState& c, DrawList& d) {
   hand(d, 1500, hrAngle);
 }
 
-RenderFn kFaces[] = { hands, digital };
+// ---- spinning cube ---------------------------------------------------------
+// The thing a vector display does that a raster one cannot: twelve straight
+// strokes, no fill, no pixels. Rotation runs off the same Q16 sin/cos tables
+// the beam stepper uses, so there is no floating point anywhere in the frame
+// path — 8 vertices through two rotations and a perspective divide is well
+// under a millisecond.
+constexpr int kCubeHalf  = 560;    // half-edge in display units
+constexpr int kCubeFocal = 2200;   // eye distance; smaller = stronger perspective
+
+const int8_t kCubeVerts[8][3] = {
+  {-1,-1,-1}, { 1,-1,-1}, { 1, 1,-1}, {-1, 1,-1},   // back face
+  {-1,-1, 1}, { 1,-1, 1}, { 1, 1, 1}, {-1, 1, 1}    // front face
+};
+const uint8_t kCubeEdges[12][2] = {
+  {0,1},{1,2},{2,3},{3,0},        // back
+  {4,5},{5,6},{6,7},{7,4},        // front
+  {0,4},{1,5},{2,6},{3,7}         // struts
+};
+
+void cube(const ClockState& c, DrawList& d) {
+  (void)c;
+  // Free-running rather than time-derived: the two axes advance at different
+  // rates so it tumbles instead of spinning flat. 512 frames per yaw turn is
+  // about 8.5s at 60Hz.
+  static uint16_t tick = 0;
+  ++tick;
+  const int yaw   = (int)((tick * 2) & (vec::kSteps - 1));
+  const int pitch = (int)( tick       & (vec::kSteps - 1));
+
+  const int32_t sy = vec::sinT(yaw),   cy = vec::cosT(yaw);
+  const int32_t sp = vec::sinT(pitch), cp = vec::cosT(pitch);
+
+  int16_t px[8], py[8];
+  for (int i = 0; i < 8; ++i) {
+    const int32_t x0 = kCubeVerts[i][0] * kCubeHalf;
+    const int32_t y0 = kCubeVerts[i][1] * kCubeHalf;
+    const int32_t z0 = kCubeVerts[i][2] * kCubeHalf;
+
+    const int32_t x1 = (x0 * cy - z0 * sy) >> 16;    // yaw about Y
+    const int32_t z1 = (x0 * sy + z0 * cy) >> 16;
+    const int32_t y2 = (y0 * cp - z1 * sp) >> 16;    // pitch about X
+    const int32_t z2 = (y0 * sp + z1 * cp) >> 16;
+
+    // Eye sits at -kCubeFocal, so the divisor cannot reach zero: |z2| tops out
+    // at half-edge * sqrt(3) ~= 970, well inside 2200.
+    const int32_t den = kCubeFocal + z2;
+    px[i] = (int16_t)((x1 * kCubeFocal) / den);
+    py[i] = (int16_t)((y2 * kCubeFocal) / den);
+  }
+
+  for (int e = 0; e < 12; ++e) {
+    const uint8_t a = kCubeEdges[e][0], b = kCubeEdges[e][1];
+    d.line(px[a], py[a], px[b], py[b]);
+  }
+}
+
+RenderFn kFaces[] = { hands, digital, cube };
 
 } // namespace
 

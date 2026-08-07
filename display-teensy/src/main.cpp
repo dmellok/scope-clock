@@ -85,7 +85,9 @@ void loop() {
   const uint32_t drawStart = micros();
   vec::renderFrame(frame);       // 5. draw to the CRT (the refresh)
   dev.frameUs = micros() - drawStart;
+  vec::tuneDwell(dev.frameUs, 1000000UL / dev.hz);
 
   frameSync(dev.hz);             // 6. hold 50/60 Hz cadence
 }
+
 
