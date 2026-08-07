@@ -6,6 +6,7 @@
 #include "state.h"
 #include "drawlist.h"
 #include "vector.h"
+#include "text.h"
 
 namespace faces {
 namespace {
@@ -47,24 +48,39 @@ void digital(const ClockState& c, DrawList& d) {
   d.text(0, 0, 30, ss);
 }
 
-// Analog face: Roman numerals at trial-and-error positions, a hub circle, and
-// three hands. The hour and minute hands are drawn twice so they come out
-// brighter than the second hand — on a CRT, brightness is redraw count.
-// Having positions on the numerals also opts this list out of centring.
-void hands(const ClockState& c, DrawList& d) {
-  d.text(  490,  760, 10, "I");
-  d.text(  820,  400, 10, "II");
-  d.text(  900, -100, 10, "III");
-  d.text(  740, -590, 10, "IIII");
-  d.text(  400, -960, 10, "V");
-  d.text( -100,-1080, 10, "VI");
-  d.text( -600, -960, 10, "VII");
-  d.text(-1000, -600, 10, "VIII");
-  d.text(-1040, -100, 10, "IX");
-  d.text( -940,  400, 10, "X");
-  d.text( -600,  760, 10, "XI");
-  d.text( -160,  880, 10, "XII");
+// Roman numerals, in clock order starting at XII.
+const char* const kNumerals[12] = {
+  "XII", "I", "II", "III", "IIII", "V", "VI", "VII", "VIII", "IX", "X", "XI"
+};
+constexpr int kDialRadius  = 1000;
+constexpr int kNumeralScale = 10;
 
+// Place each numeral centred on its own hour mark.
+//
+// The original carried hand-tuned left-edge coordinates, and they are not
+// quite square: measured against their true hour angles, IX sits 55 units
+// right of its mark and V 40 units left. The errors happen to cancel — the
+// ring's mean centre is within 3 units of the origin — so it reads as centred
+// but slightly irregular. Deriving the position from the angle and the glyph's
+// own ink width instead makes it exact, and self-adjusting if the scale or
+// dial radius ever change.
+void numerals(DrawList& d) {
+  for (int h = 0; h < 12; ++h) {
+    const int a  = (h * vec::kSteps) / 12;             // 0 = XII, clockwise
+    const int cx = (int)((kDialRadius * vec::sinT(a)) >> 16);
+    const int cy = (int)((kDialRadius * vec::cosT(a)) >> 16);
+    d.text(cx - txt::inkWidth(kNumeralScale, kNumerals[h]) / 2,
+           cy - txt::height(kNumeralScale) / 2,         // baseline, not centre
+           kNumeralScale, kNumerals[h]);
+  }
+}
+
+// Analog face: numeral ring, hub circle, three hands. The hour and minute
+// hands are drawn twice so they come out brighter than the second hand — on a
+// CRT, brightness is redraw count. The numerals carry real positions, which
+// also opts this list out of txt::centerLines.
+void hands(const ClockState& c, DrawList& d) {
+  numerals(d);
   d.circle(0, 0, 90);                                   // hub
 
   const int minAngle = c.second / 15 + c.minute * 4;

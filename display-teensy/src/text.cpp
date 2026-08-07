@@ -358,6 +358,9 @@ int measure(int scale, const char* s) {
   return strWidth(scale, s, nl);
 }
 
+int kern(int scale)   { return metrics(scale).kern; }
+int height(int scale) { return metrics(scale).chrHt; }
+
 // Center(): fill in x/y for text items so the block sits centred on (0,0).
 //
 // Tricky, because one row of text is several items (the digital face draws
