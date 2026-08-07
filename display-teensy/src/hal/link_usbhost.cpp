@@ -30,9 +30,30 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
               DeviceState& dev, ClockState& clk);
 
 namespace {
-USBHost   myusb;
-USBHub    hub1(myusb);      // tolerate the bridge being behind a hub
-USBSerial userial(myusb);   // CDC-ACM; 64-byte endpoints, so not BigBuffer
+USBHost myusb;
+USBHub  hub1(myusb);        // tolerate the bridge being behind a hub
+
+// The AtomS3U's USB Serial/JTAG peripheral (303A:1001) will not be claimed by
+// a plain USBSerial, for one byte's worth of reason. USBHost_t36's generic
+// composite-CDC path insists the CDC *Data* interface carry subclass 0:
+//
+//     if (descriptors[5] != 0xA) return false;  // class 0x0A, CDC data  — ok
+//     if (descriptors[6] != 0)   return false;  // subclass             — we send 2
+//
+// Espressif's descriptor is 09 04 01 00 02 0A 02 00 00, i.e. subclass 2. The
+// CDC spec (Table 19) says that field is unused on a Data Class interface, and
+// macOS, Linux and Windows all ignore it — but this driver does not. The other
+// CDC path is no help either: it is gated on bDeviceClass == 2, and this is an
+// IAD composite that reports 239 (JTAG rides alongside the serial function).
+//
+// The peripheral's descriptors are burned into silicon, so the fix belongs on
+// this side. USBHost_t36 provides the hook: naming a VID/PID with a forced
+// sertype bypasses the descriptor sniffing entirely and takes the shared
+// endpoint path, which also queues SET_LINE_CODING and asserts DTR/RTS — the
+// latter being what makes the ESP32 side consider the port open at all.
+constexpr uint16_t kBridgeVid = 0x303A;   // Espressif
+constexpr uint16_t kBridgePid = 0x1001;   // USB JTAG/serial debug unit
+USBSerial userial(myusb, kBridgeVid, kBridgePid, USBSerial::CDCACM, /*claim at interface*/ 0);
 
 enum class RxState { Start, Id, Len, Payload, Crc };
 RxState st = RxState::Start;
@@ -72,8 +93,45 @@ void sendHello() {
   send(static_cast<uint8_t>(proto::Msg::Hello), caps, sizeof(caps));
 }
 
+// ---- TEMPORARY: does anything enumerate on the host port? ----------------
+namespace {
+USBDriver* drivers[] = { &hub1, &userial };
+const char* driverNames[] = { "Hub", "USBSerial" };
+bool driverActive[] = { false, false };
+
+// Ask the USB host controller itself, below any driver: CCS is set when the
+// port sees a device's pull-up, which only happens if that device has power.
+void debugPort() {
+  static uint32_t last = 0;
+  if (millis() - last < 2000) return;
+  last = millis();
+  const uint32_t p = USBHS_PORTSC1;
+  Serial.printf("usbhs: portsc=%08lX  connected=%lu  enabled=%lu  power=%lu  usbcmd=%08lX\n",
+                (unsigned long)p, (unsigned long)(p & 1),
+                (unsigned long)((p >> 2) & 1), (unsigned long)((p >> 12) & 1),
+                (unsigned long)USBHS_USBCMD);
+}
+
+void debugUsb() {
+  debugPort();
+  for (uint8_t i = 0; i < sizeof(drivers) / sizeof(drivers[0]); ++i) {
+    if (*drivers[i] == driverActive[i]) continue;
+    driverActive[i] = !driverActive[i];
+    if (!driverActive[i]) { Serial.printf("usb: %s disconnected\n", driverNames[i]); continue; }
+    Serial.printf("usb: %s CONNECTED vid=%04X pid=%04X", driverNames[i],
+                  drivers[i]->idVendor(), drivers[i]->idProduct());
+    const uint8_t* m = drivers[i]->manufacturer();
+    const uint8_t* p = drivers[i]->product();
+    if (m && *m) Serial.printf(" mfg='%s'", (const char*)m);
+    if (p && *p) Serial.printf(" prod='%s'", (const char*)p);
+    Serial.println();
+  }
+}
+} // namespace
+
 void poll(DeviceState& dev, ClockState& clk) {
   myusb.Task();             // drives enumeration/callbacks; never blocks
+  debugUsb();
 
   // Greet the bridge once per connection, not once per boot — on USB the
   // device can arrive long after we did, and can come and go.

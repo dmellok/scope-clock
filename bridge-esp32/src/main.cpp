@@ -40,6 +40,40 @@ static void sendFrame(proto::Msg id, const uint8_t* p, uint8_t len) {
   TO_DISPLAY.write(proto::frameCrc((uint8_t)id, len, p));   // must match the device
 }
 
+// ---- receive: the device talks back ----------------------------------------
+// Mirror of the device's assembler. Same contiguous CRC, same refusal to
+// believe a length byte that cannot fit.
+namespace rx {
+enum class St { Start, Id, Len, Payload, Crc };
+St st = St::Start;
+uint8_t id, len, idx, crc, buf[proto::MAX_PAYLOAD];
+bool helloSeen = false;     // set when the device (re)introduces itself
+
+void poll() {
+  while (TO_DISPLAY.available()) {
+    const uint8_t b = (uint8_t)TO_DISPLAY.read();
+    switch (st) {
+      case St::Start:   if (b == proto::START) st = St::Id; break;
+      case St::Id:      id = b; crc = proto::crc8_update(0x00, b); st = St::Len; break;
+      case St::Len:
+        if (b > proto::MAX_PAYLOAD) { st = St::Start; break; }
+        len = b; crc = proto::crc8_update(crc, b); idx = 0;
+        st = len ? St::Payload : St::Crc;
+        break;
+      case St::Payload:
+        buf[idx++] = b; crc = proto::crc8_update(crc, b);
+        if (idx >= len) st = St::Crc;
+        break;
+      case St::Crc:
+        if (b == crc && static_cast<proto::Msg>(id) == proto::Msg::Hello)
+          helloSeen = true;
+        st = St::Start;
+        break;
+    }
+  }
+}
+} // namespace rx
+
 static void pushLocalTime() {
   struct tm t;
   if (!getLocalTime(&t)) return;
@@ -74,20 +108,30 @@ void loop() {
     sendFrame(proto::Msg::Ping, nullptr, 0);
   }
 
+  rx::poll();
+
   if (WiFi.status() != WL_CONNECTED) return;
 
-  // Send the first SET_TIME as soon as SNTP has actually landed a real date,
-  // then re-sync hourly to ride over DST changes. getLocalTime() reports the
-  // epoch until the first NTP reply arrives, so year < 2001 means "not yet".
+  // Sync when the device asks, not merely when our own timer says so.
+  //
+  // Firing once at our boot and then hourly looks fine until you notice the
+  // device is not necessarily listening at that moment — it may not have
+  // enumerated us yet, or it may reboot later. Then it carries a stale RTC for
+  // up to an hour. The device already announces itself with Hello on every
+  // connection, so treat that as the request it is.
   const uint32_t now = millis();
-  const bool due = !everSynced ? (now - lastSync > 2000UL)
-                               : (now - lastSync > 3600000UL);
+  const bool due = rx::helloSeen
+                 || (!everSynced ? (now - lastSync > 2000UL)
+                                 : (now - lastSync > 3600000UL));
   if (!due) return;
   lastSync = now;
 
+  // getLocalTime() hands back the epoch until the first NTP reply lands, so
+  // year < 2001 means "not yet" — hold the request rather than ship 1970.
   struct tm t;
   if (!getLocalTime(&t, 0) || t.tm_year < 101) return;   // tm_year is since 1900
   pushLocalTime();
+  rx::helloSeen = false;
   everSynced = true;
 
   // TODO(P2/P3): subscribe MQTT -> sendFrame(Banner/PushList ...);
