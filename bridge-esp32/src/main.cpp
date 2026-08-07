@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ArduinoOTA.h>
 #include <time.h>
 #include "protocol.h"     // shared/
 
@@ -21,6 +22,12 @@
 #endif
 #ifndef NTP1
 #define NTP1 "pool.ntp.org"
+#endif
+#ifndef OTA_HOST
+#define OTA_HOST "scope-clock-bridge"
+#endif
+#ifndef OTA_PASS
+#define OTA_PASS ""            // empty = unauthenticated; .env should set one
 #endif
 
 // Link to the Teensy: the AtomS3U's native USB CDC, plugged into the clock's
@@ -111,6 +118,20 @@ void loop() {
   rx::poll();
 
   if (WiFi.status() != WL_CONNECTED) return;
+
+  // OTA needs the network up, so arm it on first association rather than in
+  // setup(). Deliberately no progress callbacks: they would print to Serial,
+  // which IS the protocol link, and land in the middle of a frame.
+  static bool otaReady = false;
+  if (!otaReady) {
+    ArduinoOTA.setHostname(OTA_HOST);
+    if (OTA_PASS[0]) ArduinoOTA.setPassword(OTA_PASS);
+    ArduinoOTA.begin();
+    otaReady = true;
+  }
+  // Blocks only while an update is actually in flight, and the device rides
+  // that out on its own RTC — which is the entire point of it keeping time.
+  ArduinoOTA.handle();
 
   // Sync when the device asks, not merely when our own timer says so.
   //

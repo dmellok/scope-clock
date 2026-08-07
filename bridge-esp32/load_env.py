@@ -17,8 +17,8 @@ ENV_PATH = os.path.join(env["PROJECT_DIR"], ".env")  # noqa: F821
 
 # Only these are accepted, so a stray line in .env cannot inject arbitrary
 # defines into the build.
-ALLOWED = ("WIFI_SSID", "WIFI_PASS", "TZ_POSIX", "NTP1")
-SECRET = ("WIFI_PASS",)
+ALLOWED = ("WIFI_SSID", "WIFI_PASS", "TZ_POSIX", "NTP1", "OTA_HOST", "OTA_PASS")
+SECRET = ("WIFI_PASS", "OTA_PASS")
 
 
 def main():
@@ -27,10 +27,10 @@ def main():
         print("load_env: cp .env.example .env and fill it in.")
         return
 
-    defines, skipped = [], []
+    defines, skipped, values = [], [], {}
     with open(ENV_PATH, "r", encoding="utf-8") as handle:
-        for raw in handle:
-            line = raw.strip()
+        for rawline in handle:
+            line = rawline.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
@@ -43,6 +43,7 @@ def main():
             if key not in ALLOWED:
                 skipped.append(key)
                 continue
+            values[key] = value
             defines.append((key, env.StringifyMacro(value)))  # noqa: F821
 
     if defines:
@@ -53,6 +54,8 @@ def main():
         print("load_env: %d define(s) from .env: %s" % (len(defines), shown))
     if skipped:
         print("load_env: ignored unrecognised key(s): %s" % ", ".join(skipped))
+    # OTA upload target/auth is handled by ota_target.py, which must run as a
+    # POST script; defines must be appended PRE. The two cannot share a phase.
 
 
 main()
