@@ -44,6 +44,27 @@ int beamY = kMidDac;
 int trimX = 0, trimY = 0;
 int saveX = 0, saveY = 0;
 
+// --- beam dwell, i.e. brightness --------------------------------------------
+// On a vector CRT the brightness of a stroke is how long the beam sits on each
+// dot. That used to be supplied by accident: analogWrite() was slow enough
+// (~113 cycles a channel) that the dwell came for free. Writing the DAC
+// directly made the beam sweep 3.2x faster and the picture went dim, with the
+// leftover frame time showing up as a dark gap — the tube idle two thirds of
+// every refresh.
+//
+// So the dwell is explicit now, and adjustable, which also gives Msg::Set-
+// Brightness something real to drive. Tuned so a full analog face lands just
+// inside the refresh period: the beam is drawing nearly all the time, which is
+// what keeps a vector display bright and flicker-free.
+constexpr uint32_t kMaxDotDwell = 120;   // CPU cycles per dot at full brightness
+uint32_t dotDwell = kMaxDotDwell;
+
+inline void dwell() {
+  if (!dotDwell) return;
+  const uint32_t t0 = ARM_DWT_CYCCNT;
+  while ((ARM_DWT_CYCCNT - t0) < dotDwell) { /* hold the beam on this dot */ }
+}
+
 inline int toDacX(int x) { return x + trimX + saveX + kMidDac; }
 inline int toDacY(int y) { return y + trimY + saveY + kMidDac; }
 
@@ -71,7 +92,15 @@ inline void endStroke() {
 
 } // namespace
 
+void setBrightness(uint8_t b) {
+  dotDwell = (uint32_t)kMaxDotDwell * b / 255;
+}
+
 void init() {
+  // The cycle counter is the dwell timebase; the Teensy 3 core leaves it off.
+  ARM_DEMCR    |= ARM_DEMCR_TRCENA;
+  ARM_DWT_CTRL |= ARM_DWT_CTRL_CYCCNTENA;
+
   for (int i = 0; i < kSteps; ++i) {
     const double a = (double)i * 2.0 * PI / (double)kSteps;
     costab[i] = (int32_t)(65536.0 * cos(a));
@@ -106,6 +135,7 @@ void line(int x0, int y0, int x1, int y1) {
     beamX = ((i * xinc) >> 8) + xs;
     beamY = ((i * yinc) >> 8) + ys;
     hal::dac::write(beamX, beamY);
+    dwell();
   }
   endStroke();
 }
@@ -132,6 +162,7 @@ void ellipseArc(int cx, int cy, int xrad, int yrad, int firstO, int lastO) {
     beamX = (int)((costab[a] * xrad) >> 16) + xcen;
     beamY = (int)((sintab[a] * yrad) >> 16) + ycen;
     hal::dac::write(beamX, beamY);
+    dwell();
   }
   endStroke();
 }

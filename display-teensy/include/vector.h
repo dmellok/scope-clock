@@ -36,6 +36,12 @@ int32_t cosT(int idx);
 // Whole-display offsets, in display units. These two sum: the trim is the
 // user's coarse centring, the screensaver a slow wander on top of it.
 void setTrim(int x, int y);        // analog centring pots
+
+// Beam dwell per dot, which IS brightness on a vector tube: the longer the beam
+// sits on a dot, the more energy the phosphor takes. 255 keeps the beam drawing
+// for nearly the whole refresh period; lower values finish sooner and leave the
+// tube dark for the remainder, which reads as dim and flickery.
+void setBrightness(uint8_t b);
 void updateScreenSaver(int hour);  // nudges the display once an hour, anti-burn-in
 
 } // namespace vec
