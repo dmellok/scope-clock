@@ -53,6 +53,10 @@ void loop() {
   //               else clear bannerActive. Times out locally.
 
   txt::centerLines(frame);       // 4. resolve text positions (no-op if placed)
+  const uint32_t drawStart = micros();
   vec::renderFrame(frame);       // 5. draw to the CRT (the refresh)
+  dev.frameUs = micros() - drawStart;
+
   frameSync(dev.hz);             // 6. hold 50/60 Hz cadence
 }
+

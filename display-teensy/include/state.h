@@ -20,6 +20,9 @@ struct DeviceState {
   uint8_t   faceId = 0;
   uint8_t   brightness = 255;
   uint16_t  hz = 60;            // 50 or 60
+  uint32_t  frameUs = 0;        // last render time; the budget is 1e6/hz, and
+                                // exceeding it means the refresh is free-running
+                                // slower than hz. Reported via Msg::Status.
   bool      hostPresent = false;
   DrawList  pushed;            // host-authored list when mode == Pushed
   // banner overlay (auto-expires locally so a host stall can't strand it)
