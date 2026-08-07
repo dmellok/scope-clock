@@ -5,3 +5,9 @@
 *.elf
 *.bin
 .DS_Store
+
+# Secrets. This repo is public — .env holds real Wi-Fi credentials and must
+# never be committed. The tracked template is .env.example.
+.env
+.env.*
+!.env.example

@@ -6,11 +6,22 @@
 #include <time.h>
 #include "protocol.h"     // shared/
 
-// ---- config (TODO: move to NVS / captive portal) ----
-static const char* WIFI_SSID = "YOUR_SSID";
-static const char* WIFI_PASS = "YOUR_PASS";
-static const char* TZ_POSIX  = "PST8PDT,M3.2.0,M11.1.0";  // host owns TZ + DST
-static const char* NTP1 = "pool.ntp.org";
+// ---- config ----
+// Supplied at build time from .env by load_env.py (see .env.example). That file
+// is gitignored: this repo is public, so no credential may live in source.
+// These fallbacks only exist so a fresh clone still compiles.
+#ifndef WIFI_SSID
+#define WIFI_SSID "YOUR_SSID"
+#endif
+#ifndef WIFI_PASS
+#define WIFI_PASS "YOUR_PASS"
+#endif
+#ifndef TZ_POSIX
+#define TZ_POSIX "PST8PDT,M3.2.0,M11.1.0"   // bridge owns TZ + DST, not the device
+#endif
+#ifndef NTP1
+#define NTP1 "pool.ntp.org"
+#endif
 
 // Link to the Teensy: the AtomS3U's native USB CDC, plugged into the clock's
 // rear USB-A host jack. The Teensy is the USB host and enumerates us as
