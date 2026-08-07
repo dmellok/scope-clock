@@ -1,0 +1,7 @@
+.pio/
+.vscode/
+!scope-clock.code-workspace
+*.hex
+*.elf
+*.bin
+.DS_Store

@@ -1,0 +1,13 @@
+{
+  "folders": [
+    { "name": "display-teensy", "path": "display-teensy" },
+    { "name": "bridge-esp32",   "path": "bridge-esp32" },
+    { "name": "shared+docs",    "path": "." }
+  ],
+  "settings": {
+    "files.associations": { "*.h": "cpp", "*.ino": "cpp" }
+  },
+  "extensions": {
+    "recommendations": ["platformio.platformio-ide"]
+  }
+}
