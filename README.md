@@ -33,19 +33,22 @@ or the CLI:
 
 ## Status
 
-**P0 (render engine) is done and running on hardware.** Both built-in faces —
-analog hands and digital — draw live time from the DS3232, and the analog
-centring pots work. Remaining modules still carry `TODO(port)` markers pointing
-at the function in the original firmware to bring over; the phase order is in
-`docs/architecture.md`.
+**P0-P2 are done and running on hardware.** Three faces (analog hands, digital,
+spinning cube) draw from the DS3232, the ESP32 bridge disciplines the RTC from
+NTP over a USB-host link with no wiring, and the host can push arbitrary vector
+scenes and banners.
 
 | phase | what | state |
 |-------|------|-------|
 | P0 | render engine: vectors, stroke font, RTC | done |
-| P1 | framed link, real CRC, encoder/button, NTP `SET_TIME` | next |
-| P2 | `PushList` + `Banner` — true thin client | |
-| P3 | MQTT / Home Assistant on the bridge | |
-| P4 | OTA, face templates, web config | |
+| P1 | framed link, real CRC, encoder/button, NTP `SET_TIME` | done |
+| P2 | `PushList` + `Banner` — true thin client | done |
+| P3 | MQTT / Home Assistant on the bridge | next |
+| P4 | face templates, web config | |
+
+Flashing: `pio run -t upload` in `display-teensy/`, and
+`pio run -e atoms3u_ota -t upload` in `bridge-esp32/` (over Wi-Fi).
+Copy `bridge-esp32/.env.example` to `.env` and fill it in first.
 
 ## Licence
 

@@ -33,11 +33,47 @@ Physical (zero-hardware-mod route the owner chose):
 
 ## Current state
 
-Skeleton only. Interfaces (headers), the module split, the pipeline `loop()`, the
-protocol framing, and the ESP32 NTP→SET_TIME path are real. Render bodies are
-stubs. Every stub carries a `TODO(port)` naming the original `.ino` function to
-bring over. The original source to port FROM is the upstream repo above
-(`SCTVcode/*.ino`) — clone it alongside for reference.
+**P0–P2 are done and running on hardware.** The render engine, the NTP-
+disciplined RTC over a USB-host link, and the generic draw-list path all work.
+Three faces (analog hands, digital, spinning cube), plus `PushList` / `Banner` /
+`SetMode` / `SetBrightness` / `SetHz` from the host. The bridge flashes over
+Wi-Fi (`pio run -e atoms3u_ota -t upload`); the Teensy flashes in one command
+(`pio run -t upload`). Next is **P3**.
+
+Upstream `SCTVcode/*.ino` is still the reference for anything not yet ported —
+clone it alongside.
+
+## Hard-won details (each of these cost hours; do not rediscover them)
+
+- **Brightness is beam dwell per dot, and it cannot be a constant.** What the eye
+  reads is beam-on time per refresh, which depends on how many dots a frame has.
+  `vec::tuneDwell` steers it on measured frame time. Speeding up rendering
+  *dims* the tube unless the dwell grows to compensate — that is not a bug.
+- **Never call `USBSerialBase::begin()`** — it spins up to 5s and `yield()` does
+  not run the render loop, so the CRT freezes on a static image. Enumeration
+  already sets line coding and DTR/RTS. `USBSerialBase::write()` also spins
+  unbounded when its buffer is full; gate every send on `availableForWrite()`.
+- **The bridge must be spoken to first.** ESP32 `HWCDC::write` discards
+  everything until the peripheral *receives* something, and a soft reset clears
+  that. A soft reset does not drop the USB pull-up, so the Teensy sees no
+  disconnect — the device re-announces on a timer to break the tie.
+- **`USBSerial` will not claim the AtomS3U on descriptors alone**: Espressif
+  sets subclass 2 on the CDC Data interface where the driver demands 0. The
+  VID/PID constructor with a forced `CDCACM` sertype is the way in.
+- The blanking pin is **active low** despite its name: HIGH makes photons.
+- The RTC holds local time; the bridge owns TZ/DST. A wrong `TZ_POSIX` makes the
+  clock silently, confidently wrong — check any candidate against tzdata.
+- Credentials live in `bridge-esp32/.env` (gitignored, this repo is public).
+  `-D` defines are silently DROPPED if appended from a *post* script; verify
+  they reached the ELF rather than trusting a green build.
+
+## Verifying without eyes on the tube
+
+Two habits that have caught real bugs repeatedly, both worth continuing:
+`scratchpad/hostsim` compiles the real `vector.cpp`/`text.cpp`/`faces.cpp`
+against a fake DAC and renders a frame to SVG, so geometry can be checked before
+flashing; and the PushList decoder is fuzzed under ASan/UBSan with guard bytes,
+since it is the only place untrusted bytes become a structure.
 
 ## Hard rules (do not violate)
 
@@ -71,10 +107,23 @@ bring over. The original source to port FROM is the upstream repo above
 
 ## Your task right now
 
-Start **P0**: clone upstream SCTVcode for reference, then port `vector.cpp` and
-`text.cpp` so `display-teensy` builds and the two built-in faces draw real time
-from the RTC. Fill the `TODO(port)` stubs; keep the module boundaries and the hard
-rules above. Build with `pio run` in `display-teensy/`.
+**P3**: MQTT / Home Assistant on the bridge, driving banners and scenes. The
+bridge already has the encoders it needs — `sendBanner`, `sendSetMode` and
+`ListBuilder`, currently `[[maybe_unused]]` for exactly this reason — and
+`PubSubClient` is already in `lib_deps`. Broker settings belong in `.env`
+alongside the Wi-Fi credentials, via the existing `load_env.py`.
+
+Still open, smaller: `Msg::Status` is defined but unimplemented, so `frameUs`
+and RTC health never reach the host; `EventEncoder`/`EventButton` are sent but
+nothing consumes them; and the ESP32's Wi-Fi power saving shows as ~300ms ping
+latency, which will matter once MQTT wants to push promptly
+(`WiFi.setSleep(false)`).
+
+Teensy OTA was considered and **rejected**: FlasherX would work, but a failed
+update leaves no valid application, and the only way back in is the physical
+program button — which on this build means disassembling the clock. HalfKay
+flashing is retryable and unbrickable; the micro-USB jack is externally
+accessible, so any always-on machine on that port gives remote updates safely.
 
 ## Environment note
 
