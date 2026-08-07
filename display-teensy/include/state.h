@@ -24,7 +24,14 @@ struct DeviceState {
                                 // exceeding it means the refresh is free-running
                                 // slower than hz. Reported via Msg::Status.
   bool      hostPresent = false;
-  DrawList  pushed;            // host-authored list when mode == Pushed
+
+  DrawList  pushed;             // host-authored list when mode == Pushed
+  // Backing store for pushed text. Item holds a const char*, and the link's
+  // receive buffer is overwritten by the next frame, so the strings have to be
+  // copied somewhere with the same lifetime as the list itself. A payload
+  // cannot exceed MAX_PAYLOAD, so its strings cannot either.
+  static constexpr uint16_t kArenaSize = 240;
+  char      arena[kArenaSize] = {0};
   // banner overlay (auto-expires locally so a host stall can't strand it)
   bool      bannerActive = false;
   uint32_t  bannerUntilMs = 0;

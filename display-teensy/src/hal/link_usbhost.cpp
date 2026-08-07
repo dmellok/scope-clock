@@ -70,6 +70,30 @@ constexpr int kRxBudget = 512;
 constexpr uint32_t kHostTimeoutMs = 15000;
 uint32_t lastFrameMs = 0;
 bool     everHeard   = false;
+
+// Re-announce ourselves while the link is up but silent.
+//
+// The bridge's USB Serial/JTAG peripheral throws away everything written to it
+// until it believes a host is listening, and it only comes to believe that on
+// RECEIVING something (HWCDC::write calls flushTXBuffer — a drop — whenever
+// isCDC_Connected() is false, and that flag is set from the RX and TX-complete
+// interrupts). A soft reset clears it.
+//
+// An ESP32 soft reset does not drop the USB pull-up, so from this side nothing
+// disconnects: no port change, no re-enumeration, no fresh claim. Sending Hello
+// only on the connect transition therefore deadlocks after every OTA update —
+// the bridge is discarding its frames waiting to hear from us, and we are
+// staying quiet because as far as we know the link never dropped.
+//
+// Speaking first costs one small frame every few seconds and breaks the tie.
+// It doubles as the time request, since the bridge answers Hello with SET_TIME.
+// Silence has to be judged against the bridge's own heartbeat, not guessed at:
+// a threshold shorter than its ping interval makes the link look dead in the
+// gap between pings, so we re-announce, the bridge answers with SET_TIME, and
+// the RTC gets rewritten over I2C every few seconds forever.
+constexpr uint32_t kSilenceMs    = 8000;   // > the bridge's 5s ping
+constexpr uint32_t kHelloRetryMs = 3000;   // how often to retry while silent
+uint32_t lastHelloMs = 0;
 }
 
 namespace hal { namespace link {
@@ -100,12 +124,23 @@ void poll(DeviceState& dev, ClockState& clk) {
   // device can arrive long after we did, and can come and go.
   static bool wasUp = false;
   const bool isUp = (bool)userial;
+  const uint32_t now = millis();
   if (isUp && !wasUp) {
     st = RxState::Start;    // a fresh cable means a fresh byte stream
-    sendHello();
+    everHeard = false;
   }
   if (!isUp) everHeard = false;
   wasUp = isUp;
+
+  // Keep announcing until the bridge actually answers, not just once on
+  // connect — see kHelloRetryMs above for why once is not enough.
+  if (isUp) {
+    const bool silent = !everHeard || (now - lastFrameMs) > kSilenceMs;
+    if (silent && (now - lastHelloMs) > kHelloRetryMs) {
+      lastHelloMs = now;
+      sendHello();
+    }
+  }
 
   int budget = kRxBudget;
   while (isUp && userial.available() && budget-- > 0) {

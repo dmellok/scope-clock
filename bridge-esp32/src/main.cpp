@@ -47,6 +47,60 @@ static void sendFrame(proto::Msg id, const uint8_t* p, uint8_t len) {
   TO_DISPLAY.write(proto::frameCrc((uint8_t)id, len, p));   // must match the device
 }
 
+// ---- send: draw lists and banners -------------------------------------------
+// The bridge's half of the generic path. Layouts are specified in protocol.h;
+// these builders are what P3 will drive from MQTT.
+
+[[maybe_unused]] static void sendBanner(const char* text, uint16_t ms, uint8_t priority = 0) {
+  uint8_t p[proto::MAX_PAYLOAD];
+  p[0] = (uint8_t)(ms & 0xFF);
+  p[1] = (uint8_t)(ms >> 8);
+  p[2] = priority;
+  uint8_t n = 3;
+  for (const char* q = text; *q && n < proto::MAX_PAYLOAD; ++q) p[n++] = (uint8_t)*q;
+  sendFrame(proto::Msg::Banner, p, n);
+}
+
+[[maybe_unused]] static void sendSetMode(uint8_t mode, uint8_t faceId = 0) {
+  const uint8_t p[2] = { mode, faceId };
+  sendFrame(proto::Msg::SetMode, p, sizeof(p));
+}
+
+// Accumulates items into a payload. Every add() checks the remaining space, so
+// a list that grows too big loses its tail rather than overrunning the buffer.
+struct [[maybe_unused]] ListBuilder {
+  uint8_t buf[proto::MAX_PAYLOAD];
+  uint8_t len = 1;      // buf[0] is the item count
+  uint8_t count = 0;
+
+  ListBuilder() { buf[0] = 0; }
+
+  void put16(int16_t v) {
+    buf[len++] = (uint8_t)(v & 0xFF);
+    buf[len++] = (uint8_t)((v >> 8) & 0xFF);
+  }
+  bool room(uint8_t need) const { return (uint16_t)len + need <= proto::MAX_PAYLOAD; }
+
+  void text(int16_t x, int16_t y, int16_t scale, const char* s) {
+    uint8_t sl = 0; while (s[sl]) ++sl;
+    if (!room((uint8_t)(8 + sl))) return;
+    buf[len++] = 0x01; put16(x); put16(y); put16(scale); buf[len++] = sl;
+    for (uint8_t i = 0; i < sl; ++i) buf[len++] = (uint8_t)s[i];
+    buf[0] = ++count;
+  }
+  void line(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
+    if (!room(9)) return;
+    buf[len++] = 0x02; put16(x0); put16(y0); put16(x1); put16(y1);
+    buf[0] = ++count;
+  }
+  void circle(int16_t cx, int16_t cy, int16_t r) {
+    if (!room(7)) return;
+    buf[len++] = 0x03; put16(cx); put16(cy); put16(r);
+    buf[0] = ++count;
+  }
+  void send() const { sendFrame(proto::Msg::PushList, buf, len); }
+};
+
 // ---- receive: the device talks back ----------------------------------------
 // Mirror of the device's assembler. Same contiguous CRC, same refusal to
 // believe a length byte that cannot fit.
@@ -116,6 +170,7 @@ void loop() {
   }
 
   rx::poll();
+
 
   if (WiFi.status() != WL_CONNECTED) return;
 

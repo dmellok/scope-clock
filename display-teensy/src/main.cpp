@@ -16,6 +16,35 @@ static DeviceState dev;
 static DrawList    frame;
 static uint32_t    lastMicros = 0;
 
+// The banner sits in the strip below the numeral ring, which reaches about
+// -1100 in a field that runs to -1250. Added AFTER txt::centerLines, because
+// it carries a real position and any positioned text item opts the whole list
+// out of centring — running it first would break the digital face.
+//
+// Expiry is checked here, on the device, against millis(): a host that dies
+// mid-banner cannot leave one burnt onto the screen.
+static void overlayBanner(DeviceState& d, DrawList& list) {
+  // Placement is a trade-off with no clean answer. The gap between the numeral
+  // ring (ink bottom -1100) and the edge of the active field (-1250) is 150
+  // units, which a legible banner does not fit inside — and sitting flush
+  // against -1250 means the tube's overscan, plus whatever the centring trim
+  // is set to, quietly eats the bottom of the text.
+  //
+  // So it sits 60 units clear of the edge and is allowed to cross the lower
+  // part of the VI numeral instead. It is an overlay and it expires; being
+  // readable matters more than never touching the dial.
+  constexpr int kBannerScale = 8;
+  constexpr int kBannerY     = -1190;   // baseline; ink runs to -1030
+
+  if (!d.bannerActive) return;
+  if ((int32_t)(millis() - d.bannerUntilMs) >= 0) {   // wrap-safe comparison
+    d.bannerActive = false;
+    return;
+  }
+  const int w = txt::inkWidth(kBannerScale, d.bannerText);
+  list.text(-w / 2, kBannerY, kBannerScale, d.bannerText);
+}
+
 static void frameSync(uint16_t hz) {
   const uint32_t period = 1000000UL / hz;
   while (micros() - lastMicros < period) { /* spin briefly */ }
@@ -49,10 +78,9 @@ void loop() {
       frame = dev.pushed;        // host-authored
       break;
   }
-  // TODO(banner): if dev.bannerActive && millis() < bannerUntilMs, overlay text;
-  //               else clear bannerActive. Times out locally.
-
   txt::centerLines(frame);       // 4. resolve text positions (no-op if placed)
+  overlayBanner(dev, frame);     // 5. banner goes on top, already positioned
+
   vec::setBrightness(dev.brightness);
   const uint32_t drawStart = micros();
   vec::renderFrame(frame);       // 5. draw to the CRT (the refresh)

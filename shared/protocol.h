@@ -62,6 +62,32 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
   return c;
 }
 
+// ---------------------------------------------------------------------------
+// Payload layouts. All multi-byte fields are little-endian.
+//
+// SetMode      [mode:u8][faceId:u8]
+//              mode 0 = render a local face (faceId selects it)
+//              mode 1 = render the retained pushed list
+//
+// PushList     [count:u8] followed by `count` self-describing items:
+//                Text    0x01, x:i16, y:i16, scale:i16, len:u8, chars  (8+len)
+//                Line    0x02, x:i16, y:i16, x2:i16, y2:i16            (9)
+//                Circle  0x03, cx:i16, cy:i16, r:i16                   (7)
+//              The tags match ItemType on the device. Text is NOT terminated
+//              on the wire — the device copies each string into its own arena
+//              and terminates it there, because Item holds a pointer and the
+//              receive buffer is reused by the very next frame.
+//              A text item at x=0,y=0 opts into the device's own centring.
+//
+// Banner       [ms:u16][priority:u8][chars...]   text runs to end of payload
+//              Overlaid on whatever is showing and expires locally after `ms`,
+//              so a host that dies mid-banner cannot strand it on the screen.
+//              ms = 0 clears any banner immediately.
+//
+// SetBrightness [level:u8]   255 = full beam dwell
+// SetHz         [hz:u8]      50 or 60
+// ---------------------------------------------------------------------------
+
 // SetTime payload (local time; host already applied timezone + DST).
 struct __attribute__((packed)) SetTimePayload {
   uint8_t year;   // 0-99 (20xx)

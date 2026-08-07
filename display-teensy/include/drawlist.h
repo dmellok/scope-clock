@@ -30,3 +30,14 @@ struct DrawList {
     if (count < CAP) items[count++] = Item{ItemType::Circle, (int16_t)cx, (int16_t)cy, (int16_t)r, 0, 0, nullptr};
   }
 };
+
+// Decode a PushList payload (see shared/protocol.h) into `out`, copying any
+// text into `arena` and pointing the items at it — Item holds a pointer, and
+// the link's receive buffer is overwritten by the next frame.
+//
+// This is the only place untrusted bytes become a structure, so it validates
+// everything: item count, per-item length against the remaining payload, and
+// arena space. On any malformed input it returns false having emptied `out`,
+// which blanks the display rather than rendering something half-parsed.
+bool decodePushList(const uint8_t* payload, uint8_t len,
+                    DrawList& out, char* arena, uint16_t arenaCap);
