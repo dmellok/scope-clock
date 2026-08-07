@@ -17,13 +17,11 @@ static const char* NTP1 = "pool.ntp.org";
 #define TO_DISPLAY Serial1
 
 static void sendFrame(proto::Msg id, const uint8_t* p, uint8_t len) {
-  uint8_t hdr[2] = { (uint8_t)id, len };
   TO_DISPLAY.write(proto::START);
-  TO_DISPLAY.write(hdr, 2);
+  TO_DISPLAY.write((uint8_t)id);
+  TO_DISPLAY.write(len);
   if (len) TO_DISPLAY.write(p, len);
-  uint8_t c = proto::crc8(hdr, 2);
-  if (len) c ^= proto::crc8(p, len);   // skeleton crc
-  TO_DISPLAY.write(c);
+  TO_DISPLAY.write(proto::frameCrc((uint8_t)id, len, p));   // must match the device
 }
 
 static void pushLocalTime() {
@@ -40,20 +38,34 @@ void setup() {
   TO_DISPLAY.begin(115200, SERIAL_8N1, /*RX=*/44, /*TX=*/43);  // TODO: real pins
 
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) delay(250);
-
   configTzTime(TZ_POSIX, NTP1);         // NTP + timezone/DST handled here
-  delay(1500);
-  pushLocalTime();                       // first SET_TIME
 }
 
+// Wi-Fi comes and goes, and the clock has to survive that: the device keeps
+// its own time from the RTC, so a bridge that cannot reach the network is an
+// inconvenience, not an outage. Nothing here blocks waiting for a link.
 void loop() {
-  static uint32_t last = 0;
-  if (millis() - last > 3600000UL) {     // re-sync hourly (covers DST edges)
-    last = millis();
-    pushLocalTime();
-  }
+  static uint32_t lastSync  = 0;
+  static bool     everSynced = false;
+
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  // Send the first SET_TIME as soon as SNTP has actually landed a real date,
+  // then re-sync hourly to ride over DST changes. getLocalTime() reports the
+  // epoch until the first NTP reply arrives, so year < 2001 means "not yet".
+  const uint32_t now = millis();
+  const bool due = !everSynced ? (now - lastSync > 2000UL)
+                               : (now - lastSync > 3600000UL);
+  if (!due) return;
+  lastSync = now;
+
+  struct tm t;
+  if (!getLocalTime(&t, 0) || t.tm_year < 101) return;   // tm_year is since 1900
+  pushLocalTime();
+  everSynced = true;
+
   // TODO(P2/P3): subscribe MQTT -> sendFrame(Banner/PushList ...);
   //              read frames back from the Teensy (EventEncoder/Button/Status).
 }

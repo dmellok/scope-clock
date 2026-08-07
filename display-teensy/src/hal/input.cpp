@@ -1,8 +1,10 @@
 // input.cpp — rotary encoder, button, and the analog centring pots.
-// TODO(port): DoEnc/DoButt quadrature table + debounce, then emit
-// proto EventEncoder/EventButton via hal::link::send.
+// Quadrature table and button debounce ported from SCTVcode InitEnc/DoEnc/DoButt.
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "hal/input.h"
+#include "hal/link.h"
+#include "face.h"
+#include "protocol.h"     // shared/
 #include "state.h"
 #include "vector.h"
 #include <Arduino.h>
@@ -48,6 +50,49 @@ struct Trim {
 
 Trim xTrim{kXPosPin};
 Trim yTrim{kYPosPin};
+
+// ---- rotary encoder ------------------------------------------------------
+// Old reading in bits 1:0, new reading in bits 3:2; the table turns that pair
+// into a direction. The PEC11R has two detents per electrical cycle, so only
+// transitions where A moves count — which is why half the table is `none`.
+// `impos` entries are states you cannot reach without missing an edge, and
+// scoring them zero is what makes the decoder immune to contact bounce.
+constexpr int8_t incr = 1, decr = -1, none = 0, impos = 0;
+const int8_t kEncTab[16] = {
+  none, decr, none, impos,   // new = 00
+  incr, none, impos, none,   // new = 01
+  none, impos, none, incr,   // new = 10
+  impos, none, decr, none    // new = 11
+};
+
+// The original polled the encoder from inside the render loop because one pass
+// of the display can take most of a frame, and a knob turned briskly changes
+// state faster than that — it sampled again mid-DispStr to avoid dropping
+// detents. Edge interrupts get the same result without the render code having
+// to know the encoder exists: the ISR only fires when the knob actually moves,
+// so it costs nothing while the display is idle.
+volatile uint8_t encState = 0;
+volatile int8_t  encDelta = 0;
+
+void encIsr() {
+  encState = (uint8_t)(((encState >> 2) | (digitalReadFast(kB) << 3)
+                                        | (digitalReadFast(kA) << 2)) & 0x0f);
+  encDelta = (int8_t)(encDelta + kEncTab[encState]);
+}
+
+// ---- button --------------------------------------------------------------
+// Active low. Three consecutive agreeing polls to debounce, as the original,
+// but classified on release so a long hold can be told apart from a tap.
+constexpr uint8_t  kDebouncePolls = 3;
+constexpr uint32_t kLongPressMs   = 800;
+uint8_t  butHist    = 0;
+bool     butDown    = false;
+bool     longSent   = false;
+uint32_t butDownMs  = 0;
+
+void sendButton(uint8_t kind) {   // 0 = press, 1 = long
+  hal::link::send(static_cast<uint8_t>(proto::Msg::EventButton), &kind, 1);
+}
 } // namespace
 
 namespace hal { namespace input {
@@ -57,11 +102,51 @@ void init() {
   pinMode(kA, INPUT_PULLUP);
   pinMode(kB, INPUT_PULLUP);
   analogReadResolution(10);   // the +/-512 centring above assumes 10 bits
+
+  // Seed the history with where the knob actually is, so the first edge is not
+  // read as motion. (InitEnc: the x5 copies the 2-bit reading into both the
+  // old and new halves at once.)
+  encState = (uint8_t)((digitalReadFast(kB) << 1 | digitalReadFast(kA)) * 5);
+  attachInterrupt(digitalPinToInterrupt(kA), encIsr, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(kB), encIsr, CHANGE);
 }
 
 void poll(DeviceState& dev) {
-  (void)dev;   // TODO(port): encoder table + button -> EventEncoder/EventButton
   vec::setTrim(xTrim.step(), yTrim.step());
+
+  // Drain whatever the ISR accumulated since the last frame.
+  noInterrupts();
+  const int8_t detents = encDelta;
+  encDelta = 0;
+  interrupts();
+
+  if (detents != 0) {
+    // Turning the knob picks the next face, as it did originally. Faces stay
+    // local so the clock keeps working with no host attached; the host is only
+    // told that the knob moved.
+    const int n = faces::count();
+    int f = ((int)dev.faceId + detents) % n;
+    if (f < 0) f += n;
+    dev.faceId = (uint8_t)f;
+    hal::link::send(static_cast<uint8_t>(proto::Msg::EventEncoder),
+                    reinterpret_cast<const uint8_t*>(&detents), 1);
+  }
+
+  const bool down = (digitalReadFast(kBtn) == 0);   // zero is pressed
+  if (down) {
+    if (butHist < kDebouncePolls) ++butHist;
+    if (butHist == kDebouncePolls && !butDown) {
+      butDown = true; longSent = false; butDownMs = millis();
+    }
+    if (butDown && !longSent && (millis() - butDownMs) >= kLongPressMs) {
+      longSent = true;
+      sendButton(1);                                 // long, reported on hold
+    }
+  } else {
+    if (butDown && !longSent) sendButton(0);         // tap, reported on release
+    butHist = 0;
+    butDown = false;
+  }
 }
 
 }}

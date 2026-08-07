@@ -15,7 +15,13 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
 namespace {
 enum class RxState { Start, Id, Len, Payload, Crc };
 RxState st = RxState::Start;
-uint8_t rid, rlen, ridx, buf[proto::MAX_PAYLOAD];
+uint8_t rid, rlen, ridx, rcrc, buf[proto::MAX_PAYLOAD];
+
+// A host that has gone quiet should not look present forever. Any valid frame
+// counts as a heartbeat; Ping/Pong just guarantees traffic when idle.
+constexpr uint32_t kHostTimeoutMs = 5000;
+uint32_t lastFrameMs = 0;
+bool     everHeard   = false;
 }
 
 namespace hal { namespace link {
@@ -23,14 +29,11 @@ namespace hal { namespace link {
 void init() { BRIDGE.begin(115200); }
 
 void send(uint8_t id, const uint8_t* p, uint8_t len) {
-  uint8_t hdr[2] = { id, len };
   BRIDGE.write(proto::START);
-  BRIDGE.write(hdr, 2);
+  BRIDGE.write(id);
+  BRIDGE.write(len);
   if (len) BRIDGE.write(p, len);
-  // crc over id+len+payload
-  uint8_t c = proto::crc8(hdr, 2);
-  if (len) c ^= proto::crc8(p, len);   // (skeleton: replace with contiguous crc)
-  BRIDGE.write(c);
+  BRIDGE.write(proto::frameCrc(id, len, p));
 }
 
 void sendHello() {
@@ -40,21 +43,46 @@ void sendHello() {
 
 void poll(DeviceState& dev, ClockState& clk) {
   while (BRIDGE.available()) {           // bounded by bytes actually buffered
-    uint8_t b = BRIDGE.read();
+    const uint8_t b = BRIDGE.read();
     switch (st) {
-      case RxState::Start:   if (b == proto::START) st = RxState::Id;        break;
-      case RxState::Id:      rid = b; st = RxState::Len;                      break;
-      case RxState::Len:     rlen = b; ridx = 0;
-                             st = rlen ? RxState::Payload : RxState::Crc;     break;
-      case RxState::Payload: buf[ridx++] = b; if (ridx >= rlen) st = RxState::Crc; break;
+      case RxState::Start:
+        if (b == proto::START) st = RxState::Id;
+        break;
+
+      case RxState::Id:
+        rid  = b;
+        rcrc = proto::crc8_update(0x00, b);
+        st   = RxState::Len;
+        break;
+
+      case RxState::Len:
+        // Length is attacker- and noise-controlled at this point, and buf only
+        // holds MAX_PAYLOAD. A corrupt byte here would otherwise run straight
+        // off the end of it.
+        if (b > proto::MAX_PAYLOAD) { st = RxState::Start; break; }
+        rlen = b;
+        rcrc = proto::crc8_update(rcrc, b);
+        ridx = 0;
+        st   = rlen ? RxState::Payload : RxState::Crc;
+        break;
+
+      case RxState::Payload:
+        buf[ridx++] = b;
+        rcrc = proto::crc8_update(rcrc, b);
+        if (ridx >= rlen) st = RxState::Crc;
+        break;
+
       case RxState::Crc:
-        // TODO: verify crc == b before dispatch
-        dispatch(rid, buf, rlen, dev, clk);
+        if (b == rcrc) {                 // silently drop anything that fails
+          lastFrameMs = millis();
+          everHeard   = true;
+          dispatch(rid, buf, rlen, dev, clk);
+        }
         st = RxState::Start;
         break;
     }
   }
-  dev.hostPresent = true;  // TODO: track via Ping/Pong timeout
+  dev.hostPresent = everHeard && (millis() - lastFrameMs) < kHostTimeoutMs;
 }
 
 }}
