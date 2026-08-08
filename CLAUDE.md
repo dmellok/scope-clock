@@ -28,16 +28,23 @@ reason the device keeps an RTC.
 
 Physical (zero-hardware-mod route the owner chose):
 - Rear **USB-A host** jack ← AtomS3U → Wi-Fi/time/notifications.
-- **Micro-USB device** jack ← a computer → USB audio (oscilloscope-music source).
-  The MK66 has two independent USB controllers, so both run at once.
+- **Micro-USB device** jack ← a computer → USB **MIDI** (drives the `midiscope` /
+  `midichord` faces) and USB audio. The MK66 has two independent USB controllers,
+  so the bridge on the back and a DAW on the front run at once.
 
 ## Current state
 
 **P0–P4 are done and running on hardware.** The render engine, the NTP-
 disciplined RTC over a USB-host link, and the generic draw-list path all work.
-Three faces (analog hands, digital, spinning cube), plus `PushList` / `Banner` /
-`SetMode` / `SetBrightness` / `SetHz` from the host, MQTT + Home Assistant
-discovery on the bridge, host-uploadable face templates, and a web config page.
+**26 faces** — dials, digital, the five Platonic solids, a tesseract, generative
+curves, and two driven live by USB-MIDI — plus `PushList` / `Banner` / `SetMode` /
+`SetBrightness` / `SetHz` from the host, MQTT + Home Assistant discovery on the
+bridge, host-uploadable face templates, and a web config page.
+
+Faces live in `faces_time/_3d/_gen/_midi.cpp` behind `faces_impl.h`; `faces.cpp`
+is only the registry and the knob/button navigation. **Face order is the wire
+id** — append, never insert, and the bridge derives its MQTT and web lists from
+`kFaceNames[]` so there is one list to update, not three.
 The bridge flashes over Wi-Fi (`pio run -e atoms3u_ota -t upload`); the Teensy
 flashes in one command (`pio run -t upload`).
 
@@ -50,6 +57,22 @@ clone it alongside.
   reads is beam-on time per refresh, which depends on how many dots a frame has.
   `vec::tuneDwell` steers it on measured frame time. Speeding up rendering
   *dims* the tube unless the dwell grows to compensate — that is not a bug.
+- **Size every face in the host sim before flashing.** `scratchpad/hostsim/faces6`
+  sweeps 1100 frames per face and reports the worst extent and worst-case dot
+  cost. A single sampled frame is not enough: the tesseract and the tunnel both
+  ran off the tube only partway through a rotation, and `sector` only reaches
+  95% of the frame budget at 23:59:59.
+- **A face switch overruns one frame.** The dwell is tuned for the previous
+  face's dot count, so jumping from a sparse face to a dense one reports a wild
+  `frameUs` (49ms was observed) until `tuneDwell` reconverges a few frames later.
+  Self-correcting; not a bug to chase.
+- **Scope music is the RATIO between two channels, not their sum.** Put the
+  lower note on X and the upper on Y and a fifth draws the 3:2 figure a fifth
+  actually is. Summing both notes into both axes — the obvious implementation —
+  destroys exactly the thing worth seeing, because then neither axis is any one
+  note. Also: path length scales with cycle count, so dense figures must be
+  drawn *smaller* or they blow the frame (a semitone cluster is 16:15 and wants
+  37ms of a 16.7ms frame at full size).
 - **Never call `USBSerialBase::begin()`** — it spins up to 5s and `yield()` does
   not run the render loop, so the CRT freezes on a static image. Enumeration
   already sets line coding and DTR/RTS. `USBSerialBase::write()` also spins
@@ -111,9 +134,13 @@ since it is the only place untrusted bytes become a structure.
 Nothing is outstanding on the roadmap. Open threads, none blocking:
 
 - `EventEncoder`/`EventButton` reach Home Assistant as device triggers, but the
-  button still has no local behaviour. It is free to assign.
-- More faces are cheap now that the cube proves the 3D path — a starfield or
-  Lissajous figure would be a few dozen lines.
+  button still has no local behaviour beyond cycling the variant within a family.
+- The MIDI faces only read note on/off and the sustain pedal. Pitch bend, velocity
+  curves and per-channel colouring are all unclaimed, and `hal::midi::MidiState`
+  already carries enough to do them.
+- Nothing auto-switches to `midiscope` when MIDI starts arriving. `MidiState`
+  has `lastEventMs`, so "hand the tube to whatever is playing, then give it back"
+  is a few lines — but it fights whatever the host last pushed, hence not done.
 - Scenes and templates are documented only in `shared/protocol.h`; if the repo
   gets users, that wants a page of its own with worked examples.
 

@@ -295,7 +295,8 @@ static const char* const kFaceNames[] = {
   "digital", "datetime", "wordclock", "binary",
   "tetra", "cube", "octa", "icosa", "dodeca", "tesseract", "torus",
   "lissajous", "harmonograph", "spirograph", "rose", "lorenz", "starpoly",
-  "starfield", "tunnel"
+  "starfield", "tunnel",
+  "midiscope", "midichord"
 };
 constexpr uint8_t kFaceCount = sizeof(kFaceNames) / sizeof(kFaceNames[0]);
 static uint8_t  curFace       = 0;

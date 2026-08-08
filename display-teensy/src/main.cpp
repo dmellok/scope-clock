@@ -10,6 +10,7 @@
 #include "hal/rtc.h"
 #include "hal/input.h"
 #include "hal/link.h"
+#include "hal/midi.h"
 #include "hal/watchdog.h"
 
 static ClockState  clk;
@@ -61,6 +62,7 @@ void setup() {
   hal::rtc::init();
   hal::input::init();
   hal::link::init();          // Serial1 <-> ESP32 bridge
+  hal::midi::init();          // USB-MIDI on the front jack
   faces::registerBuiltins();
   clk.rtcPresent = hal::rtc::present();
   hal::link::sendHello();
@@ -73,6 +75,7 @@ void loop() {
 
   hal::link::poll(dev, clk);     // 1. host commands in (non-blocking)
   hal::input::poll(dev);         // 2. encoder/button out
+  hal::midi::poll();             // 2b. USB-MIDI in (bounded drain, front jack)
 
   frame.clear();                 // 3. compose the current frame
   switch (dev.mode) {

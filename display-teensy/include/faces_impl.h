@@ -45,6 +45,10 @@ void starpoly(const ClockState&, DrawList&);   // {n/k} star polygons
 void starfield(const ClockState&, DrawList&);
 void tunnel(const ClockState&, DrawList&);
 
+// --- MIDI (faces_midi.cpp) --------------------------------------------------
+void midiscope(const ClockState&, DrawList&);  // the interval as an X-Y figure
+void midichord(const ClockState&, DrawList&);  // the chord as a shape on a wheel
+
 // --- shared helpers ---------------------------------------------------------
 inline int to12(int h) { return h == 0 ? 12 : (h > 12 ? h - 12 : h); }
 

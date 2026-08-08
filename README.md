@@ -33,12 +33,22 @@ or the CLI:
 
 ## Status
 
-**The roadmap is complete and running on hardware.** Three built-in faces
-(analog hands, digital, spinning cube) draw from the DS3232; the ESP32 bridge
-disciplines the RTC from NTP over a USB-host link with no wiring; the host can
-push arbitrary vector scenes, banners, and *face templates* that keep telling
-the time on their own; and the clock appears in Home Assistant over MQTT
-discovery with controls, diagnostics and device triggers.
+**The roadmap is complete and running on hardware.** Twenty-six built-in faces
+draw from the DS3232; the ESP32 bridge disciplines the RTC from NTP over a
+USB-host link with no wiring; the host can push arbitrary vector scenes,
+banners, and *face templates* that keep telling the time on their own; and the
+clock appears in Home Assistant over MQTT discovery with controls, diagnostics
+and device triggers.
+
+![the built-in faces](faces.png)
+
+The knob walks the five families — dials, digital, solids, curves, motion — and
+the button changes the style within one. Two further faces are driven live over
+**USB-MIDI** on the front jack: `midiscope` plots the lower note against the
+upper, so an interval draws its own frequency ratio the way an oscilloscope in
+X-Y mode does (a fifth is the 3:2 figure), and `midichord` shows the sounding
+pitch classes as a shape on the chromatic wheel. `tools/play_midi.py --demo`
+walks the intervals if there is no keyboard to hand.
 
 The bridge also serves a config page at `http://scope-clock-bridge.local/`
 (guarded by the OTA password) for setting Wi-Fi, MQTT and timezone without
