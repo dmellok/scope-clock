@@ -24,6 +24,7 @@ enum class Msg : uint8_t {
   PushBegin      = 0x08,   // start staging a draw list larger than one frame
   PushChunk      = 0x09,   // append raw PushList bytes to the staging buffer
   PushCommit     = 0x0A,   // decode what was staged and show it
+  Notify         = 0x0B,   // title + body overlay, placed, auto-expiring
   // device -> host
   Hello          = 0x81,   // fw version, caps, panel size
   Pong           = 0x82,
@@ -98,6 +99,12 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 //              A text item at x=0,y=0 opts into the device's own centring.
 //
 // Banner       [ms:u16][priority:u8][chars...]   text runs to end of payload
+// Notify       [ms:u16][place:u8][titleLen:u8][title][body]
+//                place 0 bottom strip, 1 top strip, 2 centred card.
+//                titleLen may be 0; body runs to the end of the payload.
+//                ms == 0 clears any notification early. Like Banner, the
+//                expiry is the DEVICE's — a host that dies mid-notice
+//                cannot leave one burnt on the screen.
 //              Overlaid on whatever is showing and expires locally after `ms`,
 //              so a host that dies mid-banner cannot strand it on the screen.
 //              ms = 0 clears any banner immediately.

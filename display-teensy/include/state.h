@@ -39,8 +39,12 @@ struct DeviceState {
   // cannot exceed MAX_PAYLOAD, so its strings cannot either.
   static constexpr uint16_t kArenaSize = 240;
   char      arena[kArenaSize] = {0};
-  // banner overlay (auto-expires locally so a host stall can't strand it)
-  bool      bannerActive = false;
-  uint32_t  bannerUntilMs = 0;
-  char      bannerText[64] = {0};
+  // Notification overlay: title + body, placed, auto-expiring locally so a host
+  // stall can't strand one on screen. A plain Banner is just this with no title
+  // and the bottom placement, so there is one overlay renderer, not two.
+  bool      noteActive = false;
+  uint32_t  noteUntilMs = 0;
+  uint8_t   notePlace = 0;          // 0 bottom strip, 1 top strip, 2 centred card
+  char      noteTitle[32] = {0};
+  char      noteBody[64] = {0};
 };

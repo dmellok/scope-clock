@@ -107,6 +107,12 @@ clone it alongside.
   is handled in the USB ISR, which keeps running when the main loop does not).
   Worth knowing against the OTA-rejection reasoning below: a *hang* is not the
   same as a failed FlasherX leaving no valid application.
+- **A strip fits ONE line; only the centred card fits two.** The clear air
+  between the numeral ring (ink to ~1100) and the edge of the field is about
+  150 units, and one line at scale 7 is 140. Stacking a title above a body in a
+  strip lands it squarely on the numerals — `notify.cpp` joins them into one
+  line instead and shrinks to fit. Ink width is exactly linear in scale below
+  40, so the fitting scale is a division, not a search.
 - **Debug the Teensy over its own front-jack console, not through the bridge.**
   Reflashing drops the USB-host port and USBHost_t36 never re-claims it, so
   every experiment routed through the link costs a multi-minute recovery (or an

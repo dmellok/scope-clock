@@ -17,22 +17,49 @@ void applySetTime(ClockState& clk, const proto::SetTimePayload& p) {
   clk.everSet = true;
 }
 
+// Copy into a fixed buffer, always terminated, never past the end.
+void copyField(char* dst, uint8_t cap, const uint8_t* src, uint8_t n) {
+  const uint8_t k = n < (uint8_t)(cap - 1) ? n : (uint8_t)(cap - 1);
+  for (uint8_t i = 0; i < k; ++i) dst[i] = (char)src[i];
+  dst[k] = '\0';
+}
+
+// A Banner is a Notify with no title in the bottom strip, so there is one
+// renderer and one expiry rather than two of each.
 void applyBanner(DeviceState& dev, const uint8_t* p, uint8_t len) {
   if (len < 3) return;
   const uint16_t ms = (uint16_t)(p[0] | (p[1] << 8));
   // p[2] is priority — reserved until there is more than one banner source.
-  if (ms == 0) { dev.bannerActive = false; return; }
+  if (ms == 0) { dev.noteActive = false; return; }
 
-  const uint8_t textLen = (uint8_t)(len - 3);
-  const uint8_t n = textLen < sizeof(dev.bannerText) - 1
-                  ? textLen : (uint8_t)(sizeof(dev.bannerText) - 1);
-  for (uint8_t i = 0; i < n; ++i) dev.bannerText[i] = (char)p[3 + i];
-  dev.bannerText[n] = '\0';
+  dev.noteTitle[0] = '\0';
+  dev.notePlace = 0;
+  copyField(dev.noteBody, sizeof dev.noteBody, p + 3, (uint8_t)(len - 3));
 
   // Deliberately millis()-relative and owned by the device: if the host stops
-  // talking mid-banner, it still clears itself instead of sticking forever.
-  dev.bannerUntilMs = millis() + ms;
-  dev.bannerActive  = true;
+  // talking mid-banner, it still comes down on time.
+  dev.noteActive = true;
+  dev.noteUntilMs = millis() + ms;
+}
+
+// Notify [ms:u16][place:u8][titleLen:u8][title][body]
+void applyNotify(DeviceState& dev, const uint8_t* p, uint8_t len) {
+  if (len < 4) return;
+  const uint16_t ms = (uint16_t)(p[0] | (p[1] << 8));
+  if (ms == 0) { dev.noteActive = false; return; }
+
+  const uint8_t place = p[2] > 2 ? 0 : p[2];
+  uint8_t tlen = p[3];
+  // A titleLen that overruns the payload is the one hostile input here; clamp
+  // it rather than reading past the frame.
+  if ((uint16_t)tlen + 4 > len) tlen = (uint8_t)(len - 4);
+
+  dev.notePlace = place;
+  copyField(dev.noteTitle, sizeof dev.noteTitle, p + 4, tlen);
+  copyField(dev.noteBody,  sizeof dev.noteBody,  p + 4 + tlen,
+            (uint8_t)(len - 4 - tlen));
+  dev.noteActive = true;
+  dev.noteUntilMs = millis() + ms;
 }
 
 // Staging for a draw list too big for one frame. Lives here rather than in
@@ -128,6 +155,10 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
 
     case proto::Msg::Banner:
       applyBanner(dev, payload, len);
+      break;
+
+    case proto::Msg::Notify:
+      applyNotify(dev, payload, len);
       break;
 
     case proto::Msg::SetBrightness:

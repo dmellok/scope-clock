@@ -165,13 +165,31 @@ footer a:hover{text-decoration:underline}
 </section>
 
 <section>
-  <h2><svg class="i"><use href="#i-megaphone-simple"/></svg>Banner</h2>
+  <h2><svg class="i"><use href="#i-megaphone-simple"/></svg>Notification</h2>
+  <div class="row" style="margin-bottom:8px">
+    <input type="text" id="ntitle" placeholder="title (optional)" maxlength="31">
+  </div>
   <div class="row">
     <input type="text" id="bmsg" placeholder="message" maxlength="60">
     <button class="primary" id="b-send">Send</button>
   </div>
-  <p class="hint">Overlaid on whatever is showing, and expires on the device — so
-    a bridge that dies cannot strand it on screen.</p>
+  <div class="row" style="margin-top:8px">
+    <label class="mini">where
+      <select id="nplace">
+        <option value="bottom">bottom strip</option>
+        <option value="top">top strip</option>
+        <option value="center">centred card</option>
+      </select></label>
+    <label class="mini">for
+      <input type="number" id="nms" value="8" min="1" max="60" step="1">s</label>
+    <span class="sp"></span>
+    <button id="b-nclear">Clear</button>
+  </div>
+  <p class="hint">Overlaid on whatever is showing, and it expires on the
+    <em>device</em> — a bridge that dies cannot strand one on screen. A strip is a
+    single line and shrinks to fit; the centred card keeps the title on its own
+    line and draws a frame so it reads over a busy face. Also on MQTT at
+    <code>notify/set</code>, and in Home Assistant as a notify entity.</p>
 </section>
 
 <section class="span2">
@@ -277,7 +295,15 @@ fetch("/api/faces").then(function(r){return r.json()}).then(function(a){
 el("faces").addEventListener("click",function(e){
   var b=e.target.closest("[data-f]"); if(b) post("/api/face",b.dataset.f)});
 
-el("b-send").onclick=function(){var m=el("bmsg").value.trim();if(m)post("/api/banner",m)};
+function jstr(x){return JSON.stringify(String(x))}
+el("b-send").onclick=function(){
+  var m=el("bmsg").value.trim(), t=el("ntitle").value.trim();
+  if(!m&&!t)return;
+  post("/api/notify","{\"title\":"+jstr(t)+",\"message\":"+jstr(m)+
+    ",\"place\":"+jstr(el("nplace").value)+
+    ",\"ms\":"+(Math.max(1,Math.min(60,+el("nms").value||8))*1000)+"}");
+};
+el("b-nclear").onclick=function(){post("/api/notify","{\"message\":\"\",\"ms\":0}")};
 el("b-push").onclick=function(){post("/api/scene",el("scene").value)};
 el("b-clear").onclick=function(){post("/api/scene","")};
 

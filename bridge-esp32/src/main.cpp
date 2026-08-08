@@ -146,6 +146,74 @@ static void sendFrame(proto::Msg id, const uint8_t* p, uint8_t len) {
   sendFrame(proto::Msg::Banner, p, n);
 }
 
+// Notify [ms:u16][place:u8][titleLen:u8][title][body]
+static void sendNotify(const String& title, const String& body,
+                       uint8_t place, uint16_t ms) {
+  uint8_t p[proto::MAX_PAYLOAD];
+  p[0] = (uint8_t)(ms & 0xFF);
+  p[1] = (uint8_t)(ms >> 8);
+  p[2] = place;
+  // Title is length-prefixed by a single byte, so it cannot be longer than one,
+  // and both together cannot exceed the payload. Truncate here rather than let
+  // the device decide — it has the smaller buffers.
+  uint8_t tl = (uint8_t)(title.length() > 31 ? 31 : title.length());
+  uint16_t n = 4;
+  for (uint8_t i = 0; i < tl && n < proto::MAX_PAYLOAD; ++i) p[n++] = (uint8_t)title[i];
+  tl = (uint8_t)(n - 4);
+  p[3] = tl;
+  for (uint16_t i = 0; i < body.length() && n < proto::MAX_PAYLOAD; ++i)
+    p[n++] = (uint8_t)body[i];
+  sendFrame(proto::Msg::Notify, p, (uint8_t)n);
+}
+
+// Minimal field lookup for the flat objects Home Assistant's notify service
+// sends. A JSON library for four known keys would be a dependency and a heap
+// allocator in the MQTT callback; this is neither.
+static String jsonField(const String& src, const char* key) {
+  const String pat = String("\"") + key + "\"";
+  const int k = src.indexOf(pat);
+  if (k < 0) return String();
+  int i = src.indexOf(':', k + pat.length());
+  if (i < 0) return String();
+  ++i;
+  while (i < (int)src.length() && isSpace(src[i])) ++i;
+  if (i >= (int)src.length()) return String();
+  if (src[i] == '"') {
+    String out;
+    for (++i; i < (int)src.length() && src[i] != '"'; ++i) {
+      if (src[i] == '\\' && i + 1 < (int)src.length()) ++i;
+      out += src[i];
+    }
+    return out;
+  }
+  int e = i;
+  while (e < (int)src.length() && (isDigit(src[e]) || src[e] == '-')) ++e;
+  return src.substring(i, e);
+}
+
+// Accepts either the JSON that HA sends or a bare line of text, so the topic is
+// useful from a shell as well as from a notify service.
+static void applyNotify(const String& msg, uint16_t defaultMs) {
+  String title, body, where;
+  long ms = defaultMs;
+  if (msg.startsWith("{")) {
+    title = jsonField(msg, "title");
+    body  = jsonField(msg, "message");
+    if (!body.length()) body = jsonField(msg, "body");
+    where = jsonField(msg, "place");
+    const String m = jsonField(msg, "ms");
+    if (m.length()) ms = m.toInt();
+  } else {
+    body = msg;
+  }
+  uint8_t place = 0;
+  if (where.equalsIgnoreCase("top")) place = 1;
+  else if (where.startsWith("cent") || where.startsWith("Cent")) place = 2;
+  if (ms < 0) ms = 0;
+  if (ms > 60000) ms = 60000;
+  sendNotify(title, body, place, (uint16_t)ms);
+}
+
 [[maybe_unused]] static void sendSetMode(uint8_t mode, uint8_t faceId = 0) {
   const uint8_t p[2] = { mode, faceId };
   sendFrame(proto::Msg::SetMode, p, sizeof(p));
@@ -375,7 +443,9 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
   for (unsigned i = 0; i < len; ++i) msg += (char)payload[i];
   const String tp(t);
 
-  if (tp == topic("banner/set")) {
+  if (tp == topic("notify/set")) {
+    applyNotify(msg, bannerMs);
+  } else if (tp == topic("banner/set")) {
     sendBanner(msg.c_str(), bannerMs);
   } else if (tp == topic("banner/duration")) {
     const long v = msg.toInt();
@@ -452,6 +522,18 @@ static void publishDiscovery() {
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
   mqtt.publish((String("homeassistant/notify/") + cfg.mqttPrefix + "/banner/config").c_str(), j.c_str(), true);
 
+  // The command template is what makes the title survive: HA's notify service
+  // takes title and message separately, and without this only the message is
+  // sent. Placement and duration come from the service call's data block.
+  j = String("{\"name\":\"Notification\",\"uniq_id\":\"" MQTT_PREFIX "_notify\",")
+      + "\"cmd_t\":\"" + topic("notify/set") + "\","
+      + "\"cmd_tpl\":\"{\\\"title\\\":\\\"{{ title|default('') }}\\\","
+      + "\\\"message\\\":\\\"{{ message }}\\\","
+      + "\\\"place\\\":\\\"{{ data.place|default('bottom') }}\\\","
+      + "\\\"ms\\\":{{ data.ms|default(8000) }}}\","
+      + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+  mqtt.publish((String("homeassistant/notify/") + cfg.mqttPrefix + "/notify/config").c_str(), j.c_str(), true);
+
   // Diagnostics, from the device's own Status frames.
   struct Sen { const char* id; const char* name; const char* leaf;
                const char* unit; const char* ic; };
@@ -513,6 +595,7 @@ static void mqttConnect() {
   publishDiscovery();
   publishState();
   statusFresh = true;                 // republish everything on this connection
+  mqtt.subscribe(topic("notify/set").c_str());
   mqtt.subscribe(topic("banner/set").c_str());
   mqtt.subscribe(topic("banner/duration").c_str());
   mqtt.subscribe(topic("face/set").c_str());
@@ -726,6 +809,8 @@ static void handleApi() {
     curBrightness = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
     const uint8_t p[1] = { curBrightness };
     sendFrame(proto::Msg::SetBrightness, p, 1);
+  } else if (uri.endsWith("/notify")) {
+    applyNotify(body, bannerMs);
   } else if (uri.endsWith("/banner")) {
     sendBanner(body.c_str(), bannerMs);
   } else if (uri.endsWith("/scene")) {
@@ -922,6 +1007,7 @@ void loop() {
     web.on("/api/faces", HTTP_GET, handleFaces);
     web.on("/api/face", HTTP_POST, handleApi);
     web.on("/api/brightness", HTTP_POST, handleApi);
+    web.on("/api/notify", HTTP_POST, handleApi);
     web.on("/api/banner", HTTP_POST, handleApi);
     web.on("/api/scene", HTTP_POST, handleApi);
     web.on("/api/audio", HTTP_POST, handleApi);
