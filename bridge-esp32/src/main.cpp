@@ -122,6 +122,10 @@ struct [[maybe_unused]] ListBuilder {
 // the bridge and not the display MCU on purpose — rule 5, keep the radio off
 // the beam.
 
+static bool rxHello = false;      // device (re)introduced itself
+static bool statusFresh = true;   // force a full republish after (re)connect
+static void onFrame(uint8_t id, const uint8_t* p, uint8_t len);
+
 static WiFiClient   net;
 static PubSubClient mqtt(net);
 
@@ -233,6 +237,47 @@ static void publishDiscovery() {
       + "\"cmd_t\":\"" + topic("banner/set") + "\","
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
   mqtt.publish(("homeassistant/notify/" MQTT_PREFIX "/banner/config"), cfg.c_str(), true);
+
+  // Diagnostics, from the device's own Status frames.
+  struct Sen { const char* id; const char* name; const char* leaf;
+               const char* unit; const char* ic; };
+  static const Sen sens[] = {
+    {"uptime",  "Uptime",     "uptime/state",  "s",  "mdi:timer-outline"},
+    {"frame",   "Frame time", "frame/state",   "us", "mdi:speedometer"},
+    {"timeset", "Time synced","timeset/state", "s",  "mdi:clock-check-outline"},
+  };
+  for (const Sen& sn : sens) {
+    cfg = String("{\"name\":\"") + sn.name + "\",\"uniq_id\":\"" MQTT_PREFIX "_" + sn.id + "\","
+        + "\"stat_t\":\"" + topic(sn.leaf) + "\",\"unit_of_meas\":\"" + sn.unit + "\","
+        + "\"ic\":\"" + sn.ic + "\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\","
+        + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+    mqtt.publish((String("homeassistant/sensor/" MQTT_PREFIX "/") + sn.id + "/config").c_str(),
+                 cfg.c_str(), true);
+  }
+
+  cfg = String("{\"name\":\"RTC\",\"uniq_id\":\"" MQTT_PREFIX "_rtc\",")
+      + "\"stat_t\":\"" + topic("rtc/state") + "\",\"dev_cla\":\"problem\","
+      + "\"pl_on\":\"OFF\",\"pl_off\":\"ON\",\"ent_cat\":\"diagnostic\","
+      + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+  mqtt.publish(("homeassistant/binary_sensor/" MQTT_PREFIX "/rtc/config"), cfg.c_str(), true);
+
+  // Device triggers, so the knob and button show up in the automation UI as
+  // things to trigger on rather than topics to remember.
+  struct Trg { const char* id; const char* type; const char* sub;
+               const char* leaf; const char* payload; };
+  static const Trg trgs[] = {
+    {"press", "button_short_press", "button",  "event/button",  "press"},
+    {"long",  "button_long_press",  "button",  "event/button",  "long"},
+    {"left",  "button_short_press", "knob_ccw","event/encoder", "left"},
+    {"right", "button_short_press", "knob_cw", "event/encoder", "right"},
+  };
+  for (const Trg& tg : trgs) {
+    cfg = String("{\"automation_type\":\"trigger\",\"type\":\"") + tg.type + "\","
+        + "\"subtype\":\"" + tg.sub + "\",\"topic\":\"" + topic(tg.leaf) + "\","
+        + "\"payload\":\"" + tg.payload + "\"," + dev + "}";
+    mqtt.publish((String("homeassistant/device_automation/" MQTT_PREFIX "/") + tg.id + "/config").c_str(),
+                 cfg.c_str(), true);
+  }
 }
 
 static void mqttConnect() {
@@ -252,11 +297,89 @@ static void mqttConnect() {
   mqtt.publish(avail.c_str(), "online", true);
   publishDiscovery();
   publishState();
+  statusFresh = true;                 // republish everything on this connection
   mqtt.subscribe(topic("banner/set").c_str());
   mqtt.subscribe(topic("banner/duration").c_str());
   mqtt.subscribe(topic("face/set").c_str());
   mqtt.subscribe(topic("brightness/set").c_str());
   mqtt.subscribe(topic("scene/set").c_str());
+}
+
+// Telemetry and input, republished for Home Assistant. Only on change, so a
+// 5s status heartbeat does not become 5s of MQTT traffic.
+static void publishStatus(const proto::StatusPayload& s) {
+  static proto::StatusPayload prev{};
+  char b[16];
+
+  // Do not consume the change-detection state while offline. Status arrives
+  // every 5s and the broker connection comes up later, so without this the
+  // first frame is compared against, silently dropped, and stored as `prev` —
+  // after which anything that never changes again (rtcOk, mode) is never
+  // published at all. That is exactly what happened: the constantly-moving
+  // sensors appeared and the steady ones did not.
+  if (!mqtt.connected()) return;
+  const bool first = statusFresh;
+
+  if (first || s.faceId != prev.faceId) {
+    // The knob can change the face too, so this is what keeps HA honest about
+    // what is actually on the tube rather than what HA last asked for.
+    if (s.faceId < kFaceCount) {
+      curFace = s.faceId;
+      mqtt.publish(topic("face/state").c_str(), kFaceNames[curFace], true);
+    }
+  }
+  if (first || s.brightness != prev.brightness) {
+    curBrightness = s.brightness;
+    snprintf(b, sizeof b, "%u", s.brightness);
+    mqtt.publish(topic("brightness/state").c_str(), b, true);
+  }
+  if (first || s.rtcOk != prev.rtcOk)
+    mqtt.publish(topic("rtc/state").c_str(), s.rtcOk ? "ON" : "OFF", true);
+  if (first || s.mode != prev.mode)
+    mqtt.publish(topic("mode/state").c_str(), s.mode ? "pushed" : "face", true);
+
+  // These move constantly, so rate-limit rather than change-detect.
+  static uint32_t lastSlow = 0;
+  if (first || millis() - lastSlow > 30000) {
+    lastSlow = millis();
+    snprintf(b, sizeof b, "%lu", (unsigned long)s.uptimeS);
+    mqtt.publish(topic("uptime/state").c_str(), b, true);
+    snprintf(b, sizeof b, "%lu", (unsigned long)s.frameUs);
+    mqtt.publish(topic("frame/state").c_str(), b, true);
+    // 0xFFFF means "never synced since the device booted". Skipping the
+    // publish would leave the previous retained value in place, which then
+    // claims a sync that predates the reboot — an age larger than the uptime.
+    // Publish an empty payload instead: that clears the retained topic and HA
+    // shows the sensor as unknown, which is the truth.
+    if (s.setAgeS == 0xFFFF) mqtt.publish(topic("timeset/state").c_str(), "", true);
+    else { snprintf(b, sizeof b, "%u", s.setAgeS);
+           mqtt.publish(topic("timeset/state").c_str(), b, true); }
+  }
+  prev = s; statusFresh = false;
+}
+
+static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
+  switch (static_cast<proto::Msg>(id)) {
+    case proto::Msg::Hello:
+      rxHello = true;
+      break;
+    case proto::Msg::Status: {
+      if (len < sizeof(proto::StatusPayload)) break;
+      proto::StatusPayload s;
+      memcpy(&s, p, sizeof s);          // the payload need not be aligned
+      publishStatus(s);
+      break;
+    }
+    case proto::Msg::EventEncoder:
+      if (len >= 1)
+        mqtt.publish(topic("event/encoder").c_str(), (int8_t)p[0] > 0 ? "right" : "left");
+      break;
+    case proto::Msg::EventButton:
+      if (len >= 1)
+        mqtt.publish(topic("event/button").c_str(), p[0] ? "long" : "press");
+      break;
+    default: break;
+  }
 }
 
 // ---- receive: the device talks back ----------------------------------------
@@ -266,7 +389,7 @@ namespace rx {
 enum class St { Start, Id, Len, Payload, Crc };
 St st = St::Start;
 uint8_t id, len, idx, crc, buf[proto::MAX_PAYLOAD];
-bool helloSeen = false;     // set when the device (re)introduces itself
+// helloSeen lives outside the namespace so onFrame can set it
 
 void poll() {
   while (TO_DISPLAY.available()) {
@@ -284,8 +407,7 @@ void poll() {
         if (idx >= len) st = St::Crc;
         break;
       case St::Crc:
-        if (b == crc && static_cast<proto::Msg>(id) == proto::Msg::Hello)
-          helloSeen = true;
+        if (b == crc) onFrame(id, buf, len);
         st = St::Start;
         break;
     }
@@ -367,7 +489,7 @@ void loop() {
   // up to an hour. The device already announces itself with Hello on every
   // connection, so treat that as the request it is.
   const uint32_t now = millis();
-  const bool due = rx::helloSeen
+  const bool due = rxHello
                  || (!everSynced ? (now - lastSync > 2000UL)
                                  : (now - lastSync > 3600000UL));
   if (!due) return;
@@ -378,7 +500,7 @@ void loop() {
   struct tm t;
   if (!getLocalTime(&t, 0) || t.tm_year < 101) return;   // tm_year is since 1900
   pushLocalTime();
-  rx::helloSeen = false;
+  rxHello = false;
   everSynced = true;
 
   // TODO(P2/P3): subscribe MQTT -> sendFrame(Banner/PushList ...);

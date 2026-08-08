@@ -93,6 +93,7 @@ bool     everHeard   = false;
 // the RTC gets rewritten over I2C every few seconds forever.
 constexpr uint32_t kSilenceMs    = 8000;   // > the bridge's 5s ping
 constexpr uint32_t kHelloRetryMs = 3000;   // how often to retry while silent
+constexpr uint32_t kTimeAskMs    = 10000;  // how often to re-ask for the time
 uint32_t lastHelloMs = 0;
 }
 
@@ -134,9 +135,20 @@ void poll(DeviceState& dev, ClockState& clk) {
 
   // Keep announcing until the bridge actually answers, not just once on
   // connect — see kHelloRetryMs above for why once is not enough.
+  //
+  // Silence is not the only reason to ask. The bridge can be pinging away
+  // quite happily while the SET_TIME it sent went into the bit bucket — its
+  // CDC peripheral drops output until it has received something, so a reply
+  // sent before we first spoke is simply gone. Then the link looks perfectly
+  // healthy from here and we sit with an undisciplined RTC indefinitely.
+  //
+  // So also ask while we have no time at all. Hello doubles as the request,
+  // and "I have not been set" is the honest trigger.
   if (isUp) {
-    const bool silent = !everHeard || (now - lastFrameMs) > kSilenceMs;
-    if (silent && (now - lastHelloMs) > kHelloRetryMs) {
+    const bool silent   = !everHeard || (now - lastFrameMs) > kSilenceMs;
+    const bool needTime = !clk.everSet;
+    const uint32_t since = now - lastHelloMs;
+    if ((silent && since > kHelloRetryMs) || (needTime && since > kTimeAskMs)) {
       lastHelloMs = now;
       sendHello();
     }

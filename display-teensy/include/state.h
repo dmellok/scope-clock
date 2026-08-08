@@ -11,6 +11,10 @@ struct ClockState {
   int16_t hour = 0, minute = 0, second = 0;
   bool    rtcPresent = false;
   bool    hr12 = true;
+  // When the host last disciplined us. Reported in Status so the host can tell
+  // "RTC present" from "RTC actually being kept honest".
+  uint32_t setAtMs  = 0;
+  bool     everSet  = false;
 };
 
 enum class Mode : uint8_t { Face, Pushed };

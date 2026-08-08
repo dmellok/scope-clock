@@ -88,6 +88,23 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 // SetHz         [hz:u8]      50 or 60
 // ---------------------------------------------------------------------------
 
+// Status payload (device -> host, sent periodically).
+//
+// frameUs against 1e6/hz is the number that matters: exceeding it means the
+// refresh is free-running slower than hz, which reads as a dim, flickering
+// tube. setAgeS lets the host see that the RTC is being disciplined rather
+// than merely present.
+struct __attribute__((packed)) StatusPayload {
+  uint32_t uptimeS;
+  uint32_t frameUs;      // last render duration
+  uint16_t hz;           // refresh target
+  uint16_t setAgeS;      // seconds since last SetTime, 0xFFFF = never
+  uint8_t  mode;         // 0 = local face, 1 = pushed list
+  uint8_t  faceId;
+  uint8_t  brightness;
+  uint8_t  rtcOk;
+};
+
 // SetTime payload (local time; host already applied timezone + DST).
 struct __attribute__((packed)) SetTimePayload {
   uint8_t year;   // 0-99 (20xx)

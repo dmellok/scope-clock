@@ -13,6 +13,8 @@ void applySetTime(ClockState& clk, const proto::SetTimePayload& p) {
   clk.year = p.year; clk.month = p.month; clk.day = p.day;
   clk.hour = p.hour; clk.minute = p.minute; clk.second = p.second;
   hal::rtc::write(clk);      // host already applied TZ/DST -> straight to RTC
+  clk.setAtMs = millis();
+  clk.everSet = true;
 }
 
 void applyBanner(DeviceState& dev, const uint8_t* p, uint8_t len) {
@@ -34,6 +36,22 @@ void applyBanner(DeviceState& dev, const uint8_t* p, uint8_t len) {
 }
 
 } // namespace
+
+// Periodic telemetry upward. This is the permanent home for the numbers that
+// otherwise get added and removed as temporary printf debugging.
+void sendStatus(const DeviceState& dev, const ClockState& clk) {
+  proto::StatusPayload s{};
+  s.uptimeS    = millis() / 1000UL;
+  s.frameUs    = dev.frameUs;
+  s.hz         = dev.hz;
+  s.setAgeS    = clk.everSet ? (uint16_t)((millis() - clk.setAtMs) / 1000UL) : 0xFFFF;
+  s.mode       = (dev.mode == Mode::Pushed) ? 1 : 0;
+  s.faceId     = dev.faceId;
+  s.brightness = dev.brightness;
+  s.rtcOk      = clk.rtcPresent ? 1 : 0;
+  hal::link::send(static_cast<uint8_t>(proto::Msg::Status),
+                  reinterpret_cast<const uint8_t*>(&s), sizeof(s));
+}
 
 // dispatch(msgId, payload, len, dev, clk) is invoked by link::poll once a full,
 // CRC-valid frame is assembled.

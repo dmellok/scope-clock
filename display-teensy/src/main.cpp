@@ -45,6 +45,8 @@ static void overlayBanner(DeviceState& d, DrawList& list) {
   list.text(-w / 2, kBannerY, kBannerScale, d.bannerText);
 }
 
+void sendStatus(const DeviceState& dev, const ClockState& clk);
+
 static void frameSync(uint16_t hz) {
   const uint32_t period = 1000000UL / hz;
   while (micros() - lastMicros < period) { /* spin briefly */ }
@@ -86,6 +88,11 @@ void loop() {
   vec::renderFrame(frame);       // 5. draw to the CRT (the refresh)
   dev.frameUs = micros() - drawStart;
   vec::tuneDwell(dev.frameUs, 1000000UL / dev.hz);
+
+  // Telemetry, well clear of the bridge's own heartbeat so the two do not beat
+  // against each other.
+  static uint32_t lastStatus = 0;
+  if (millis() - lastStatus >= 5000) { lastStatus = millis(); sendStatus(dev, clk); }
 
   frameSync(dev.hz);             // 6. hold 50/60 Hz cadence
 }
