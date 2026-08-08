@@ -180,9 +180,10 @@ footer a:hover{text-decoration:underline}
         <label class="mini"><input type="checkbox" id="snap" checked>snap</label>
         <button id="b-del">Delete</button>
         <button id="b-wipe">Clear all</button>
+        <button id="b-live">Live</button>
       </div>
       <svg id="cv" viewBox="-1330 -1330 2660 2660"></svg>
-      <div class="meta"><span id="xy">&mdash;</span><span id="cnt">0 items</span></div>
+      <div class="meta"><span id="xy">&mdash;</span><span id="livestat"></span><span id="cnt">0 items</span></div>
     </div>
     <textarea id="scene" spellcheck="false" placeholder="C 0 0 900
 L -600 -600 600 600
@@ -195,7 +196,10 @@ D -430 -1215 9 %H:%M:%S"></textarea>
   <p class="hint">Draw on the left or type on the right — they are the same scene,
     kept in step. The dashed ring is the usable edge of the tube at &plusmn;1200;
     the solid one is where the DAC runs out. Drag to make lines, circles and
-    hands; click to place text. Select to move or delete.<br>
+    hands; click to place text. With <b>Select</b>, drag an item to move it or
+    grab a white handle to reshape it — line ends, circle and hand radii, and the
+    right edge of a text box sets its scale. <b>Live</b> mirrors every edit
+    straight onto the tube.<br>
     <code>L</code> line · <code>C</code> circle · <code>T</code> text ·
     <code>D</code> live clock text · <code>H</code> hand (sec/min/hour).
     <code>D</code> and <code>H</code> make it a face template: the device re-renders
@@ -324,6 +328,19 @@ function outside(it){
   return p.some(function(q){return Math.abs(q[0])>FIELD||Math.abs(q[1])>FIELD});
 }
 
+/* Grab points for the selected item. Returned in device coordinates with the
+   field they edit, so one drag handler covers every shape. Sized in device
+   units rather than pixels because the SVG scales with the card — 46 units is
+   about 7px on a phone and 14px on a desktop, both grabbable. */
+var HR=46, HHIT=95;
+function handles(it){
+  if(!it)return[];
+  if(it.k==="L")return[{x:it.x0,y:it.y0,f:"a"},{x:it.x1,y:it.y1,f:"b"}];
+  if(it.k==="C")return[{x:it.cx+it.r,y:it.cy,f:"r"}];
+  if(it.k==="H")return[{x:it.cx,y:it.cy+it.r1,f:"r1"},{x:it.cx,y:it.cy+it.r0,f:"r0"}];
+  return[{x:it.x+inkW(it.s,it.t),y:it.y,f:"s"}];
+}
+
 function draw(){
   var g="";
   for(var v=-1000;v<=1000;v+=250)
@@ -346,6 +363,11 @@ function draw(){
          'lengthAdjust="spacingAndGlyphs">'+esc(it.t)+'</text></g>';
     }
   });
+  if(tool==="sel"&&sel>=0&&items[sel])
+    handles(items[sel]).forEach(function(h,j){
+      g+='<circle class="hh" cx="'+h.x+'" cy="'+(-h.y)+'" r="'+HR+'"/>'+
+         '<circle class="hhit" data-h="'+j+'" cx="'+h.x+'" cy="'+(-h.y)+'" r="'+HHIT+'"/>';
+    });
   if(drag&&drag.prev)g+=drag.prev;
   cv.innerHTML='<style>.gr{stroke:#1b211f;stroke-width:2}.fld{stroke:#2b3331;stroke-width:3;fill:none}'+
     '.edg{stroke:#2b3331;stroke-width:2;fill:none;stroke-dasharray:14 12}'+
@@ -356,19 +378,71 @@ function draw(){
     '.it.out{stroke:#f0685f}.it.out text{fill:#f0685f}'+
     '.ghost{stroke:#1f3a2c;stroke-width:2;stroke-dasharray:8 10}'+
     '.hnd{stroke-linecap:round}.prev{stroke:#8d9994;stroke-width:6;fill:none;stroke-dasharray:10 8}'+
+    '.hh{fill:#eaf7f0;stroke:#0b0d0c;stroke-width:8;pointer-events:none}'+
+    '.hhit{fill:transparent;stroke:none;cursor:grab}'+
     '</style>'+g;
   el("cnt").textContent=items.length+" item"+(items.length===1?"":"s")+
     (items.length>CAP?" — over the "+CAP+" the device holds":"");
   el("cnt").className=items.length>CAP?"over":"";
 }
 
-function sync(){el("scene").value=ser();draw()}
+/* Live mode: mirror every edit onto the tube.
+   
+   This is the most link-hostile thing the page can do, so it is throttled by
+   completion rather than by a timer. A push is staged in 48-byte chunks with a
+   30ms gap between each — a full 192-item scene is 36 chunks, so better than a
+   second, and the bridge's web server is blocked for all of it. Firing on an
+   interval would pile requests up behind each other and wedge the link, which
+   costs minutes to recover.
+   
+   So: never more than one push in flight, coalesce everything that happened
+   while it was out, and settle for 250ms first so a drag or a burst of typing
+   becomes one push rather than forty. A failed push turns live mode off instead
+   of retrying into a link that is already unhappy. */
+var live=false, inflight=false, dirty=false, settleT=null;
+
+function setLive(on){
+  live=on;
+  el("b-live").className=on?"on":"";
+  el("livestat").textContent=on?"live":"";
+  if(on)schedule();
+}
+function schedule(){
+  if(!live)return;
+  dirty=true;
+  if(settleT)return;
+  settleT=setTimeout(function(){settleT=null;pump()},250);
+}
+function pump(){
+  if(!live||inflight||!dirty)return;
+  dirty=false; inflight=true;
+  var t0=Date.now();
+  el("livestat").textContent="pushing…";
+  fetch("/api/scene",{method:"POST",body:el("scene").value}).then(function(r){
+    if(!r.ok)throw 0;
+    el("livestat").textContent="live · "+(Date.now()-t0)+"ms";
+    // A breath before the next one, so status frames and the ping still fit.
+    setTimeout(function(){inflight=false;if(dirty)pump()},150);
+  }).catch(function(){
+    inflight=false; setLive(false);
+    el("livestat").textContent="push failed — live off";
+  });
+}
+el("b-live").onclick=function(){setLive(!live)};
+
+function sync(push){el("scene").value=ser();draw();if(push!==false)schedule()}
 function reparse(){items=parse(el("scene").value);sel=-1;draw()}
-el("scene").addEventListener("input",reparse);
+el("scene").addEventListener("input",function(){reparse();schedule()});
 
 cv.addEventListener("pointerdown",function(ev){
   var p=pt(ev);
   if(tool==="sel"){
+    // A handle sits on top of the shape it belongs to, so test it first.
+    var h=ev.target.getAttribute&&ev.target.getAttribute("data-h");
+    if(h!==null&&h!==undefined&&sel>=0){
+      drag={mode:"handle",h:+h,from:p,orig:JSON.parse(JSON.stringify(items[sel]))};
+      cv.setPointerCapture(ev.pointerId);return;
+    }
     var t=ev.target.closest?ev.target.closest("[data-i]"):null;
     sel=t?+t.getAttribute("data-i"):-1;
     if(sel>=0)drag={mode:"move",from:p,orig:JSON.parse(JSON.stringify(items[sel]))};
@@ -389,12 +463,27 @@ cv.addEventListener("pointermove",function(ev){
   var p=pt(ev);
   el("xy").textContent=p.x+", "+p.y;
   if(!drag)return;
+  if(drag.mode==="handle"&&sel>=0){
+    var it=items[sel], o=drag.orig, f=handles(o)[drag.h].f;
+    if(f==="a"){it.x0=p.x;it.y0=p.y}
+    else if(f==="b"){it.x1=p.x;it.y1=p.y}
+    else if(f==="r"){it.r=Math.max(1,Math.round(Math.hypot(p.x-o.cx,p.y-o.cy)))}
+    else if(f==="r1"){it.r1=Math.max(1,Math.round(Math.hypot(p.x-o.cx,p.y-o.cy)))}
+    else if(f==="r0"){it.r0=Math.max(0,Math.round(Math.hypot(p.x-o.cx,p.y-o.cy)))}
+    else if(f==="s"){
+      // Ink width is exactly linear in scale, so the scale that makes the box
+      // end under the pointer is one division rather than a search.
+      var unit=inkW(1,o.t)||1;
+      it.s=Math.max(1,Math.min(60,Math.round((p.x-o.x)/unit)));
+    }
+    sync(false);return;
+  }
   if(drag.mode==="move"&&sel>=0){
     var o=drag.orig, dx=p.x-drag.from.x, dy=p.y-drag.from.y, it=items[sel];
     if(it.k==="L"){it.x0=o.x0+dx;it.y0=o.y0+dy;it.x1=o.x1+dx;it.y1=o.y1+dy}
     else if(it.k==="C"||it.k==="H"){it.cx=o.cx+dx;it.cy=o.cy+dy}
     else{it.x=o.x+dx;it.y=o.y+dy}
-    sync();return;
+    sync(false);return;          // mid-drag: redraw only, push on release
   }
   var a=drag.from, r=Math.round(Math.hypot(p.x-a.x,p.y-a.y));
   if(tool==="L")drag.prev='<line class="prev" x1="'+a.x+'" y1="'+(-a.y)+'" x2="'+p.x+'" y2="'+(-p.y)+'"/>';
