@@ -154,8 +154,11 @@ void line(int x0, int y0, int x1, int y1) {
   else                len = (int)sqrtf((float)(xlen * xlen + ylen * ylen));
   if (len <= 0) len = kLineStride;   // degenerate: still put one dot down
 
-  const int xinc = (xlen << 8) / len;   // 24.8 fixed point per unit of length
-  const int yinc = (ylen << 8) / len;
+  // 24.8 fixed point per unit of length. Multiply rather than shift: a left
+  // shift of a negative value is undefined, and half of every stroke runs in
+  // the negative direction.
+  const int xinc = (xlen * 256) / len;
+  const int yinc = (ylen * 256) / len;
 
   beginStroke(xs, ys);
   for (int i = 0; i < len; i += kLineStride) {

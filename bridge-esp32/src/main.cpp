@@ -288,9 +288,14 @@ static WiFiClient   net;
 static PubSubClient mqtt(net);
 
 // Must match faces.cpp on the device, in order — Status reports an index and
-// this is what turns it back into a name.
+// this is what turns it back into a name. Grouped by the device's families, so
+// the order here also drives how the picker reads.
 static const char* const kFaceNames[] = {
-  "hands", "numbers", "digital", "datetime", "cube", "lissajous", "starfield"
+  "hands", "numbers", "tickdial", "orbit", "sector",
+  "digital", "datetime", "wordclock", "binary",
+  "tetra", "cube", "octa", "icosa", "dodeca", "tesseract", "torus",
+  "lissajous", "harmonograph", "spirograph", "rose", "lorenz", "starpoly",
+  "starfield", "tunnel"
 };
 constexpr uint8_t kFaceCount = sizeof(kFaceNames) / sizeof(kFaceNames[0]);
 static uint8_t  curFace       = 0;
@@ -409,9 +414,17 @@ static void publishDiscovery() {
                    + "\"mf\":\"Cathode Corner\",\"mdl\":\"SCTV\"}";
   String j;
 
+  // Built from kFaceNames rather than typed out again: a second copy of the
+  // list is a second thing to forget when a face is added, and the symptom
+  // (a face the knob can select but the dropdown cannot) is a confusing one.
+  String opts;
+  for (uint8_t i = 0; i < kFaceCount; ++i) {
+    if (i) opts += ',';
+    opts += '"'; opts += kFaceNames[i]; opts += '"';
+  }
   j = String("{\"name\":\"Face\",\"uniq_id\":\"" MQTT_PREFIX "_face\",")
       + "\"cmd_t\":\"" + topic("face/set") + "\",\"stat_t\":\"" + topic("face/state") + "\","
-      + "\"options\":[\"hands\",\"numbers\",\"digital\",\"datetime\",\"cube\",\"lissajous\",\"starfield\"],"
+      + "\"options\":[" + opts + "],"
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
   mqtt.publish((String("homeassistant/select/") + cfg.mqttPrefix + "/face/config").c_str(), j.c_str(), true);
 
@@ -666,6 +679,19 @@ static void handleState() {
   web.send(200, "application/json", j);
 }
 
+// The face list, fetched once at page load. The page could carry its own copy,
+// but then adding a face means editing three lists in two languages and the one
+// you forget is the one nobody notices for a week.
+static void handleFaces() {
+  String j = "[";
+  for (uint8_t i = 0; i < kFaceCount; ++i) {
+    if (i) j += ',';
+    j += '"'; j += kFaceNames[i]; j += '"';
+  }
+  j += ']';
+  web.send(200, "application/json", j);
+}
+
 // The API mirrors the MQTT topics exactly rather than inventing a second set of
 // semantics — same handlers, same effects, so the two cannot drift apart.
 static void handleApi() {
@@ -856,6 +882,7 @@ void loop() {
     ArduinoOTA.begin();
     web.on("/", HTTP_GET, [] { web.send_P(200, "text/html", WEB_UI); });
     web.on("/api/state", HTTP_GET, handleState);
+    web.on("/api/faces", HTTP_GET, handleFaces);
     web.on("/api/face", HTTP_POST, handleApi);
     web.on("/api/brightness", HTTP_POST, handleApi);
     web.on("/api/banner", HTTP_POST, handleApi);

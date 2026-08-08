@@ -37,6 +37,8 @@ legend{padding:0 .5rem;display:flex;align-items:center;gap:.45rem;
 svg.i{width:1.05em;height:1.05em;fill:currentColor;vertical-align:-.15em;
   filter:drop-shadow(0 0 4px rgba(57,255,136,.6))}
 .row{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
+/* two dozen faces: tighter buttons so the list stays a few rows, not a wall */
+#faces button{padding:.38rem .55rem;font-size:.8rem}
 button,select,input,textarea{font:inherit;color:var(--p);background:#0a120c;
   border:1px solid var(--dim);padding:.5rem .7rem;text-shadow:inherit}
 button{cursor:pointer;letter-spacing:.08em;text-transform:uppercase}
@@ -123,15 +125,21 @@ D -430 -1215 9 %H:%M:%S"></textarea>
   icons by <a href="https://phosphoricons.com">Phosphor</a> (MIT)</p>
 
 <script>
-var FACES=["hands","numbers","digital","datetime","cube","lissajous","starfield"];
+var FACES=[];
 function el(i){return document.getElementById(i)}
 function post(p,b){return fetch(p,{method:"POST",body:b}).then(function(){setTimeout(poll,400)})}
 function dur(s){s=+s;if(!isFinite(s))return"--";
   if(s<60)return s+"s";if(s<3600)return Math.floor(s/60)+"m "+(s%60)+"s";
   return Math.floor(s/3600)+"h "+Math.floor(s%3600/60)+"m"}
 
-el("faces").innerHTML=FACES.map(function(f){
-  return '<button id="f-'+f+'" onclick="face(\''+f+'\')">'+f+'</button>'}).join("");
+// The buttons come from the device's own list, so a face added to the firmware
+// shows up here without this page being touched.
+fetch("/api/faces").then(function(r){return r.json()}).then(function(a){
+  FACES=a;
+  el("faces").innerHTML=a.map(function(f){
+    return '<button id="f-'+f+'" onclick="face(\''+f+'\')">'+f+'</button>'}).join("");
+  poll();
+});
 function face(f){post("/api/face",f)}
 function banner(){var m=el("bmsg").value.trim();if(m)post("/api/banner",m)}
 function scene(){post("/api/scene",el("scene").value)}
