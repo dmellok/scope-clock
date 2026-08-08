@@ -731,18 +731,34 @@ static void handleApi() {
 static void handleRoot() {
   if (!webAuthed()) return;
   String h =
-    "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
-    "<title>Scope Clock</title><style>"
-    "body{font:15px system-ui;margin:0;padding:1.5rem;background:#111;color:#ddd}"
-    "h1{font-size:1.2rem;margin:0 0 .3rem}p.s{color:#888;margin:0 0 1.2rem}"
-    "label{display:block;margin:.6rem 0}input{width:100%;box-sizing:border-box;"
-    "padding:.45rem;margin-top:.2rem;background:#1c1c1c;color:#eee;"
-    "border:1px solid #333;border-radius:4px}"
-    "fieldset{border:1px solid #333;border-radius:6px;margin:0 0 1rem;padding:.4rem 1rem 1rem}"
-    "legend{color:#39ff88;padding:0 .4rem}button{padding:.55rem 1.1rem;border:0;"
-    "border-radius:4px;background:#39ff88;color:#000;font-weight:600;cursor:pointer}"
-    "a{color:#888;font-size:.85rem}</style>"
-    "<h1>Scope Clock bridge</h1><p class=s>Saving reboots the bridge. "
+    // Same tokens as webui.h, so the two pages read as one product.
+    "<!doctype html><html lang=en><meta charset=utf-8>"
+    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<meta name=color-scheme content=dark>"
+    "<title>Settings \xe2\x80\x94 Scope Clock</title><style>"
+    ":root{--bg:#0e100f;--card:#161a19;--raised:#1d2321;--line:#272e2c;"
+    "--text:#e8ecea;--muted:#8d9994;--accent:#3ddc84}"
+    "*{box-sizing:border-box}"
+    "body{margin:0;padding:24px 18px 48px;background:var(--bg);color:var(--text);"
+    "font:15px/1.5 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    ".wrap{max-width:520px;margin:0 auto}"
+    "h1{font-size:19px;font-weight:650;margin:0 0 4px;letter-spacing:-.01em}"
+    "p.s{color:var(--muted);font-size:13px;margin:0 0 20px}"
+    "fieldset{background:var(--card);border:1px solid var(--line);border-radius:10px;"
+    "margin:0 0 14px;padding:6px 18px 18px}"
+    "legend{padding:0 8px;font-size:12px;font-weight:600;text-transform:uppercase;"
+    "letter-spacing:.07em;color:var(--muted)}"
+    "label{display:block;margin:14px 0 0;font-size:13px;color:var(--muted)}"
+    "input{width:100%;padding:9px 11px;margin-top:6px;background:var(--raised);"
+    "color:var(--text);border:1px solid var(--line);border-radius:7px;font:inherit;font-size:14px}"
+    "input:focus{outline:none;border-color:rgba(61,220,132,.45)}"
+    "button{padding:9px 16px;border:1px solid rgba(61,220,132,.45);border-radius:7px;"
+    "background:var(--raised);color:var(--accent);font:inherit;font-size:13.5px;cursor:pointer}"
+    "button:hover{background:rgba(61,220,132,.10)}"
+    "a{color:var(--muted);font-size:12.5px}a:hover{color:var(--accent)}"
+    ".foot{margin-top:18px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}"
+    "</style><div class=wrap>"
+    "<h1>Bridge settings</h1><p class=s>Saving reboots the bridge. "
     "Blank password fields keep their current value.</p><form method=POST action=/save>";
   h += "<fieldset><legend>Wi-Fi</legend>"
      + field("Network", "wifi_ssid", cfg.wifiSsid, false)
@@ -757,8 +773,9 @@ static void handleRoot() {
      + field("Password", "mq_pass", "", true)
      + field("Topic prefix", "mq_prefix", cfg.mqttPrefix, false) + "</fieldset>";
   h += "<button>Save and reboot</button></form>"
-       "<p><a href=/forget onclick=\"return confirm('Revert to the built-in settings?')\">"
-       "Forget saved settings</a></p>";
+       "<div class=foot><a href=/>\xe2\x86\x90 Back to the clock</a>"
+       "<a href=/forget onclick=\"return confirm('Revert to the built-in settings?')\">"
+       "Forget saved settings</a></div></div>";
   web.send(200, "text/html", h);
 }
 
