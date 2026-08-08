@@ -59,5 +59,5 @@ void expandTemplate(DrawList& list, const ClockState& clk,
 // everything: item count, per-item length against the remaining payload, and
 // arena space. On any malformed input it returns false having emptied `out`,
 // which blanks the display rather than rendering something half-parsed.
-bool decodePushList(const uint8_t* payload, uint8_t len,
+bool decodePushList(const uint8_t* payload, uint16_t len,
                     DrawList& out, char* arena, uint16_t arenaCap);

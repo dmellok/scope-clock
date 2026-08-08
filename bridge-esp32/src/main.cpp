@@ -185,6 +185,76 @@ struct [[maybe_unused]] ListBuilder {
   void send() const { sendFrame(proto::Msg::PushList, buf, len); }
 };
 
+// A scene bigger than one frame, staged on the device.
+//
+// Same byte stream a PushList carries, just split up: Begin, as many Chunks as
+// it takes, Commit. The device decodes the result with the same parser, so
+// there is no second format and no second set of bounds checks.
+//
+// Paced deliberately. The device drains its link once per refresh, and its USB
+// TX buffer is small — firing chunks flat out overruns it and they are dropped
+// rather than queued, which shows up as a scene that will not commit.
+// Chunks are well under MAX_PAYLOAD on purpose. HWCDC's TX ring defaults to
+// 256 bytes, so a 244-byte frame very nearly fills it in one call; when the
+// device has not drained it yet the tail is dropped rather than queued, and the
+// frame simply never arrives. Every frame that had ever worked until now was
+// tiny, which is why this only showed up with artwork.
+constexpr uint8_t kChunk = 96;
+
+static void sendStaged(const uint8_t* p, uint16_t len) {
+  sendFrame(proto::Msg::PushBegin, nullptr, 0);
+  uint16_t at = 0;
+  while (at < len) {
+    const uint8_t n = (uint16_t)(len - at) > kChunk
+                    ? kChunk : (uint8_t)(len - at);
+    sendFrame(proto::Msg::PushChunk, p + at, n);
+    at += n;
+    delay(25);                       // ~1.5 refreshes; the device polls once a frame
+  }
+  sendFrame(proto::Msg::PushCommit, nullptr, 0);
+}
+
+// Grows past MAX_PAYLOAD, so it is staged rather than sent in one frame.
+struct BigList {
+  uint8_t buf[1200];
+  uint16_t len = 1;
+  uint8_t  count = 0;
+  BigList() { buf[0] = 0; }
+  bool room(uint16_t n) const { return len + n <= sizeof(buf) && count < 128; }
+  void put16(int16_t v) { buf[len++] = (uint8_t)(v & 0xFF); buf[len++] = (uint8_t)((v >> 8) & 0xFF); }
+  void line(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
+    if (!room(9)) return;
+    buf[len++] = 0x02; put16(x0); put16(y0); put16(x1); put16(y1);
+    buf[0] = ++count;
+  }
+  void circle(int16_t cx, int16_t cy, int16_t r) {
+    if (!room(7)) return;
+    buf[len++] = 0x03; put16(cx); put16(cy); put16(r);
+    buf[0] = ++count;
+  }
+  void text(int16_t x, int16_t y, int16_t scale, const char* s) {
+    uint8_t sl = 0; while (s[sl]) ++sl;
+    if (!room((uint16_t)(8 + sl))) return;
+    buf[len++] = 0x01; put16(x); put16(y); put16(scale); buf[len++] = sl;
+    for (uint8_t i = 0; i < sl; ++i) buf[len++] = (uint8_t)s[i];
+    buf[0] = ++count;
+  }
+  void clock(int16_t x, int16_t y, int16_t scale, const char* fmt) {
+    uint8_t sl = 0; while (fmt[sl]) ++sl;
+    if (!room((uint16_t)(8 + sl))) return;
+    buf[len++] = 0x04; put16(x); put16(y); put16(scale); buf[len++] = sl;
+    for (uint8_t i = 0; i < sl; ++i) buf[len++] = (uint8_t)fmt[i];
+    buf[0] = ++count;
+  }
+  void hand(int16_t cx, int16_t cy, int16_t r0, int16_t r1, uint8_t src) {
+    if (!room(10)) return;
+    buf[len++] = 0x05; put16(cx); put16(cy); put16(r0); put16(r1);
+    buf[len++] = src;
+    buf[0] = ++count;
+  }
+  void send() const { sendStaged(buf, len); }
+};
+
 // ---- MQTT: where the smarts live -------------------------------------------
 // Everything above this point is mechanism; this is the policy layer. It is on
 // the bridge and not the display MCU on purpose — rule 5, keep the radio off
@@ -219,7 +289,8 @@ static String topic(const char* leaf) { return cfg.mqttPrefix + "/" + leaf; }
 //
 // D and H make the scene a face template: the device re-resolves them every
 // refresh, so it keeps telling the time even with the bridge gone.
-static void sceneLine(ListBuilder& b, const String& ln) {
+template <typename B>
+static void sceneLine(B& b, const String& ln) {
   if (ln.length() < 3) return;
   const char kind = ln[0];
   int v[4] = {0,0,0,0};
@@ -284,7 +355,10 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
   } else if (tp == topic("scene/set")) {
     // Empty payload means "give the clock back to its own face".
     if (msg.length() == 0) { sendSetMode(0, curFace); return; }
-    ListBuilder b;
+    // Staged, so a traced drawing is not capped at the ~34 items a single
+    // frame holds. Small scenes cost one extra round trip; big ones become
+    // possible at all.
+    BigList b;
     int start = 0;
     while (start < (int)msg.length()) {
       int nl = msg.indexOf('\n', start);
@@ -609,7 +683,7 @@ void setup() {
     mqtt.setServer(cfg.mqttHost.c_str(), (uint16_t)cfg.mqttPort.toInt());
     mqtt.setCallback(onMqtt);
     mqtt.setSocketTimeout(2);           // do not sit on a dead broker
-    mqtt.setBufferSize(768);            // discovery payloads exceed the 256 default
+    mqtt.setBufferSize(4096);           // discovery, and whole traced scenes
   }
 }
 

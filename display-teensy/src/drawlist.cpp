@@ -19,7 +19,7 @@ inline int16_t rd16(const uint8_t* p) {
 
 } // namespace
 
-bool decodePushList(const uint8_t* payload, uint8_t len,
+bool decodePushList(const uint8_t* payload, uint16_t len,
                     DrawList& out, char* arena, uint16_t arenaCap) {
   out.clear();
   if (!payload || len < 1 || !arena || arenaCap == 0) return false;

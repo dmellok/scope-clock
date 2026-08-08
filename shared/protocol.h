@@ -21,6 +21,9 @@ enum class Msg : uint8_t {
   SetBrightness  = 0x05,
   SetHz          = 0x06,   // 50 | 60
   Ping           = 0x07,
+  PushBegin      = 0x08,   // start staging a draw list larger than one frame
+  PushChunk      = 0x09,   // append raw PushList bytes to the staging buffer
+  PushCommit     = 0x0A,   // decode what was staged and show it
   // device -> host
   Hello          = 0x81,   // fw version, caps, panel size
   Pong           = 0x82,
@@ -100,6 +103,19 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 //
 // SetBrightness [level:u8]   255 = full beam dwell
 // SetHz         [hz:u8]      50 or 60
+//
+// PushBegin / PushChunk / PushCommit
+//              A PushList payload is limited to MAX_PAYLOAD, which is about 34
+//              items — fine for a banner or a face template, nowhere near
+//              enough for traced artwork. These stage the identical byte
+//              stream ([count][items...]) across as many frames as it takes:
+//              Begin resets the staging buffer, each Chunk appends its whole
+//              payload, Commit decodes the result exactly as PushList would.
+//
+//              Chunks carry no sequence number by design. The link is an
+//              ordered, CRC-checked byte stream over USB, so a chunk cannot
+//              arrive out of order — it can only fail to arrive, and Commit
+//              catches that because the staged bytes then fail to decode.
 // ---------------------------------------------------------------------------
 
 // Status payload (device -> host, sent periodically).

@@ -35,6 +35,19 @@ void applyBanner(DeviceState& dev, const uint8_t* p, uint8_t len) {
   dev.bannerActive  = true;
 }
 
+// Staging for a draw list too big for one frame. Lives here rather than in
+// DeviceState because it is protocol machinery, not something the renderer or
+// any face has any business seeing.
+//
+// 128 items of 9 bytes is the worst realistic case for line art, plus the
+// count byte. A transfer that would overflow this is abandoned rather than
+// truncated: a half-decoded picture is worse than none, and Commit will find
+// the staged bytes malformed anyway.
+constexpr uint16_t kStageCap = 1200;
+uint8_t  stage[kStageCap];
+uint16_t stageLen = 0;
+bool     stageOk  = false;      // false once a transfer has overflowed
+
 } // namespace
 
 // Periodic telemetry upward. This is the permanent home for the numbers that
@@ -79,6 +92,30 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
       } else {
         dev.mode = Mode::Face;
       }
+      break;
+
+    case proto::Msg::PushBegin:
+      stageLen = 0;
+      stageOk  = true;
+      break;
+
+    case proto::Msg::PushChunk:
+      if (!stageOk) break;                       // already given up on this one
+      if (stageLen + len > kStageCap) { stageOk = false; break; }
+      for (uint8_t i = 0; i < len; ++i) stage[stageLen++] = payload[i];
+      break;
+
+    case proto::Msg::PushCommit:
+      // Decoded by exactly the same function as a single-frame PushList, so
+      // there is one parser and one set of bounds checks, not two.
+      if (stageOk && decodePushList(stage, stageLen, dev.pushed,
+                                    dev.arena, DeviceState::kArenaSize)) {
+        dev.mode = Mode::Pushed;
+      } else {
+        dev.mode = Mode::Face;
+      }
+      stageLen = 0;
+      stageOk  = false;
       break;
 
     case proto::Msg::Banner:
