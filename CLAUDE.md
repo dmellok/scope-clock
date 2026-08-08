@@ -33,12 +33,13 @@ Physical (zero-hardware-mod route the owner chose):
 
 ## Current state
 
-**P0–P2 are done and running on hardware.** The render engine, the NTP-
+**P0–P4 are done and running on hardware.** The render engine, the NTP-
 disciplined RTC over a USB-host link, and the generic draw-list path all work.
 Three faces (analog hands, digital, spinning cube), plus `PushList` / `Banner` /
-`SetMode` / `SetBrightness` / `SetHz` from the host. The bridge flashes over
-Wi-Fi (`pio run -e atoms3u_ota -t upload`); the Teensy flashes in one command
-(`pio run -t upload`). Next is **P3**.
+`SetMode` / `SetBrightness` / `SetHz` from the host, MQTT + Home Assistant
+discovery on the bridge, host-uploadable face templates, and a web config page.
+The bridge flashes over Wi-Fi (`pio run -e atoms3u_ota -t upload`); the Teensy
+flashes in one command (`pio run -t upload`).
 
 Upstream `SCTVcode/*.ino` is still the reference for anything not yet ported —
 clone it alongside.
@@ -107,17 +108,14 @@ since it is the only place untrusted bytes become a structure.
 
 ## Your task right now
 
-**P3**: MQTT / Home Assistant on the bridge, driving banners and scenes. The
-bridge already has the encoders it needs — `sendBanner`, `sendSetMode` and
-`ListBuilder`, currently `[[maybe_unused]]` for exactly this reason — and
-`PubSubClient` is already in `lib_deps`. Broker settings belong in `.env`
-alongside the Wi-Fi credentials, via the existing `load_env.py`.
+Nothing is outstanding on the roadmap. Open threads, none blocking:
 
-Still open, smaller: `Msg::Status` is defined but unimplemented, so `frameUs`
-and RTC health never reach the host; `EventEncoder`/`EventButton` are sent but
-nothing consumes them; and the ESP32's Wi-Fi power saving shows as ~300ms ping
-latency, which will matter once MQTT wants to push promptly
-(`WiFi.setSleep(false)`).
+- `EventEncoder`/`EventButton` reach Home Assistant as device triggers, but the
+  button still has no local behaviour. It is free to assign.
+- More faces are cheap now that the cube proves the 3D path — a starfield or
+  Lissajous figure would be a few dozen lines.
+- Scenes and templates are documented only in `shared/protocol.h`; if the repo
+  gets users, that wants a page of its own with worked examples.
 
 Teensy OTA was considered and **rejected**: FlasherX would work, but a failed
 update leaves no valid application, and the only way back in is the physical

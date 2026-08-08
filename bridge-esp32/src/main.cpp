@@ -5,6 +5,8 @@
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
+#include <WebServer.h>
+#include <Preferences.h>
 #include <time.h>
 #include "protocol.h"     // shared/
 
@@ -45,6 +47,56 @@
 #ifndef MQTT_PREFIX
 #define MQTT_PREFIX "scopeclock"
 #endif
+
+// ---- runtime configuration --------------------------------------------------
+// The .env values above are compiled in and remain the bootstrap. NVS holds any
+// overrides set through the web page; an absent or empty override falls back to
+// the build-time value, so a fresh device behaves exactly as it did before this
+// existed. That fallback is the whole safety story — see cfgPanic().
+static Preferences prefs;
+static WebServer   web(80);
+
+static struct Cfg {
+  String wifiSsid, wifiPass, tz, ntp;
+  String mqttHost, mqttPort, mqttUser, mqttPass, mqttPrefix;
+} cfg;
+
+static bool cfgOverridden = false;   // any value came from NVS rather than .env
+
+static String cfgGet(const char* key, const char* fallback) {
+  const String v = prefs.getString(key, "");
+  if (v.length()) { cfgOverridden = true; return v; }
+  return String(fallback);
+}
+
+static void cfgLoad() {
+  prefs.begin("scopeclock", true);          // read-only
+  cfg.wifiSsid   = cfgGet("wifi_ssid",  WIFI_SSID);
+  cfg.wifiPass   = cfgGet("wifi_pass",  WIFI_PASS);
+  cfg.tz         = cfgGet("tz",         TZ_POSIX);
+  cfg.ntp        = cfgGet("ntp",        NTP1);
+  cfg.mqttHost   = cfgGet("mq_host",    MQTT_HOST);
+  cfg.mqttPort   = cfgGet("mq_port",    MQTT_PORT);
+  cfg.mqttUser   = cfgGet("mq_user",    MQTT_USER);
+  cfg.mqttPass   = cfgGet("mq_pass",    MQTT_PASS);
+  cfg.mqttPrefix = cfgGet("mq_prefix",  MQTT_PREFIX);
+  prefs.end();
+}
+
+// Wipe the overrides and reboot onto the compiled-in values.
+//
+// This exists because the web page can lock the bridge out of its own network,
+// and Wi-Fi is how firmware gets here — a bad SSID would otherwise cost a
+// physical flash, which for a board living inside the clock means dismantling
+// it. So a prolonged failure to associate is treated as "the config is wrong"
+// rather than "the network is down": .env is known to have worked once.
+static void cfgPanic() {
+  prefs.begin("scopeclock", false);
+  prefs.clear();
+  prefs.end();
+  delay(100);
+  ESP.restart();
+}
 
 // Link to the Teensy: the AtomS3U's native USB CDC, plugged into the clock's
 // rear USB-A host jack. The Teensy is the USB host and enumerates us as
@@ -151,7 +203,7 @@ static uint8_t  curFace       = 0;
 static uint8_t  curBrightness = 255;
 static uint16_t bannerMs      = 8000;
 
-static String topic(const char* leaf) { return String(MQTT_PREFIX) + "/" + leaf; }
+static String topic(const char* leaf) { return cfg.mqttPrefix + "/" + leaf; }
 
 // Parse one scene line into the builder. The text form exists so a scene can be
 // written by hand or by an HA template without anyone encoding binary:
@@ -246,26 +298,26 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
 // controls, rather than as topics somebody has to write YAML for.
 static void publishDiscovery() {
   const String avail = topic("availability");
-  const String dev = String("\"dev\":{\"ids\":[\"" MQTT_PREFIX "\"],\"name\":\"Scope Clock\",")
+  const String dev = String("\"dev\":{\"ids\":[\"") + cfg.mqttPrefix + "\"],\"name\":\"Scope Clock\","
                    + "\"mf\":\"Cathode Corner\",\"mdl\":\"SCTV\"}";
-  String cfg;
+  String j;
 
-  cfg = String("{\"name\":\"Face\",\"uniq_id\":\"" MQTT_PREFIX "_face\",")
+  j = String("{\"name\":\"Face\",\"uniq_id\":\"" MQTT_PREFIX "_face\",")
       + "\"cmd_t\":\"" + topic("face/set") + "\",\"stat_t\":\"" + topic("face/state") + "\","
       + "\"options\":[\"hands\",\"digital\",\"cube\"],"
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
-  mqtt.publish(("homeassistant/select/" MQTT_PREFIX "/face/config"), cfg.c_str(), true);
+  mqtt.publish((String("homeassistant/select/") + cfg.mqttPrefix + "/face/config").c_str(), j.c_str(), true);
 
-  cfg = String("{\"name\":\"Brightness\",\"uniq_id\":\"" MQTT_PREFIX "_bri\",")
+  j = String("{\"name\":\"Brightness\",\"uniq_id\":\"" MQTT_PREFIX "_bri\",")
       + "\"cmd_t\":\"" + topic("brightness/set") + "\",\"stat_t\":\"" + topic("brightness/state") + "\","
       + "\"min\":0,\"max\":255,\"mode\":\"slider\","
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
-  mqtt.publish(("homeassistant/number/" MQTT_PREFIX "/brightness/config"), cfg.c_str(), true);
+  mqtt.publish((String("homeassistant/number/") + cfg.mqttPrefix + "/brightness/config").c_str(), j.c_str(), true);
 
-  cfg = String("{\"name\":\"Banner\",\"uniq_id\":\"" MQTT_PREFIX "_banner\",")
+  j = String("{\"name\":\"Banner\",\"uniq_id\":\"" MQTT_PREFIX "_banner\",")
       + "\"cmd_t\":\"" + topic("banner/set") + "\","
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
-  mqtt.publish(("homeassistant/notify/" MQTT_PREFIX "/banner/config"), cfg.c_str(), true);
+  mqtt.publish((String("homeassistant/notify/") + cfg.mqttPrefix + "/banner/config").c_str(), j.c_str(), true);
 
   // Diagnostics, from the device's own Status frames.
   struct Sen { const char* id; const char* name; const char* leaf;
@@ -276,19 +328,19 @@ static void publishDiscovery() {
     {"timeset", "Time synced","timeset/state", "s",  "mdi:clock-check-outline"},
   };
   for (const Sen& sn : sens) {
-    cfg = String("{\"name\":\"") + sn.name + "\",\"uniq_id\":\"" MQTT_PREFIX "_" + sn.id + "\","
+    j = String("{\"name\":\"") + sn.name + "\",\"uniq_id\":\"" MQTT_PREFIX "_" + sn.id + "\","
         + "\"stat_t\":\"" + topic(sn.leaf) + "\",\"unit_of_meas\":\"" + sn.unit + "\","
         + "\"ic\":\"" + sn.ic + "\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\","
         + "\"avty_t\":\"" + avail + "\"," + dev + "}";
-    mqtt.publish((String("homeassistant/sensor/" MQTT_PREFIX "/") + sn.id + "/config").c_str(),
-                 cfg.c_str(), true);
+    mqtt.publish((String("homeassistant/sensor/") + cfg.mqttPrefix + "/" + sn.id + "/config").c_str(),
+                 j.c_str(), true);
   }
 
-  cfg = String("{\"name\":\"RTC\",\"uniq_id\":\"" MQTT_PREFIX "_rtc\",")
+  j = String("{\"name\":\"RTC\",\"uniq_id\":\"" MQTT_PREFIX "_rtc\",")
       + "\"stat_t\":\"" + topic("rtc/state") + "\",\"dev_cla\":\"problem\","
       + "\"pl_on\":\"OFF\",\"pl_off\":\"ON\",\"ent_cat\":\"diagnostic\","
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
-  mqtt.publish(("homeassistant/binary_sensor/" MQTT_PREFIX "/rtc/config"), cfg.c_str(), true);
+  mqtt.publish((String("homeassistant/binary_sensor/") + cfg.mqttPrefix + "/rtc/config").c_str(), j.c_str(), true);
 
   // Device triggers, so the knob and button show up in the automation UI as
   // things to trigger on rather than topics to remember.
@@ -301,16 +353,16 @@ static void publishDiscovery() {
     {"right", "button_short_press", "knob_cw", "event/encoder", "right"},
   };
   for (const Trg& tg : trgs) {
-    cfg = String("{\"automation_type\":\"trigger\",\"type\":\"") + tg.type + "\","
+    j = String("{\"automation_type\":\"trigger\",\"type\":\"") + tg.type + "\","
         + "\"subtype\":\"" + tg.sub + "\",\"topic\":\"" + topic(tg.leaf) + "\","
         + "\"payload\":\"" + tg.payload + "\"," + dev + "}";
-    mqtt.publish((String("homeassistant/device_automation/" MQTT_PREFIX "/") + tg.id + "/config").c_str(),
-                 cfg.c_str(), true);
+    mqtt.publish((String("homeassistant/device_automation/") + cfg.mqttPrefix + "/" + tg.id + "/config").c_str(),
+                 j.c_str(), true);
   }
 }
 
 static void mqttConnect() {
-  if (!strlen(MQTT_HOST)) return;                 // no broker configured
+  if (!cfg.mqttHost.length()) return;             // no broker configured
   static uint32_t lastTry = 0;
   if (mqtt.connected() || millis() - lastTry < 5000) return;
   lastTry = millis();
@@ -318,9 +370,10 @@ static void mqttConnect() {
   const String avail = topic("availability");
   // Last will, so HA marks the clock unavailable if the bridge drops off
   // rather than showing stale controls that silently do nothing.
-  const bool ok = strlen(MQTT_USER)
-    ? mqtt.connect(MQTT_PREFIX, MQTT_USER, MQTT_PASS, avail.c_str(), 0, true, "offline")
-    : mqtt.connect(MQTT_PREFIX, avail.c_str(), 0, true, "offline");
+  const bool ok = cfg.mqttUser.length()
+    ? mqtt.connect(cfg.mqttPrefix.c_str(), cfg.mqttUser.c_str(), cfg.mqttPass.c_str(),
+                   avail.c_str(), 0, true, "offline")
+    : mqtt.connect(cfg.mqttPrefix.c_str(), avail.c_str(), 0, true, "offline");
   if (!ok) return;
 
   mqtt.publish(avail.c_str(), "online", true);
@@ -411,6 +464,89 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
   }
 }
 
+// ---- web config -------------------------------------------------------------
+// Enough to set a clock up somewhere you cannot build firmware. Saving writes
+// NVS and reboots; clearing reverts to whatever was compiled in from .env.
+//
+// Guarded by the OTA password, because this page both reveals and sets network
+// credentials. Existing secrets are never rendered back — a blank field means
+// "leave it alone", so the page cannot be used to read them out.
+
+static bool webAuthed() {
+  if (!strlen(OTA_PASS)) return true;           // no password set, no gate
+  if (web.authenticate("admin", OTA_PASS)) return true;
+  web.requestAuthentication();
+  return false;
+}
+
+static String field(const char* label, const char* name, const String& val, bool secret) {
+  return String("<label>") + label + "<input name='" + name + "'"
+       + (secret ? " type='password' placeholder='(unchanged)'"
+                 : String(" value='") + val + "'")
+       + "></label>";
+}
+
+static void handleRoot() {
+  if (!webAuthed()) return;
+  String h =
+    "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<title>Scope Clock</title><style>"
+    "body{font:15px system-ui;margin:0;padding:1.5rem;background:#111;color:#ddd}"
+    "h1{font-size:1.2rem;margin:0 0 .3rem}p.s{color:#888;margin:0 0 1.2rem}"
+    "label{display:block;margin:.6rem 0}input{width:100%;box-sizing:border-box;"
+    "padding:.45rem;margin-top:.2rem;background:#1c1c1c;color:#eee;"
+    "border:1px solid #333;border-radius:4px}"
+    "fieldset{border:1px solid #333;border-radius:6px;margin:0 0 1rem;padding:.4rem 1rem 1rem}"
+    "legend{color:#39ff88;padding:0 .4rem}button{padding:.55rem 1.1rem;border:0;"
+    "border-radius:4px;background:#39ff88;color:#000;font-weight:600;cursor:pointer}"
+    "a{color:#888;font-size:.85rem}</style>"
+    "<h1>Scope Clock bridge</h1><p class=s>Saving reboots the bridge. "
+    "Blank password fields keep their current value.</p><form method=POST action=/save>";
+  h += "<fieldset><legend>Wi-Fi</legend>"
+     + field("Network", "wifi_ssid", cfg.wifiSsid, false)
+     + field("Password", "wifi_pass", "", true) + "</fieldset>";
+  h += "<fieldset><legend>Time</legend>"
+     + field("POSIX timezone", "tz", cfg.tz, false)
+     + field("NTP server", "ntp", cfg.ntp, false) + "</fieldset>";
+  h += "<fieldset><legend>MQTT</legend>"
+     + field("Broker", "mq_host", cfg.mqttHost, false)
+     + field("Port", "mq_port", cfg.mqttPort, false)
+     + field("Username", "mq_user", cfg.mqttUser, false)
+     + field("Password", "mq_pass", "", true)
+     + field("Topic prefix", "mq_prefix", cfg.mqttPrefix, false) + "</fieldset>";
+  h += "<button>Save and reboot</button></form>"
+       "<p><a href=/forget onclick=\"return confirm('Revert to the built-in settings?')\">"
+       "Forget saved settings</a></p>";
+  web.send(200, "text/html", h);
+}
+
+static void handleSave() {
+  if (!webAuthed()) return;
+  prefs.begin("scopeclock", false);
+  static const char* keys[] = {"wifi_ssid","tz","ntp","mq_host","mq_port","mq_user","mq_prefix"};
+  for (const char* k : keys) if (web.hasArg(k)) prefs.putString(k, web.arg(k));
+  // Secrets only when actually supplied, so a blank field is "keep".
+  if (web.hasArg("wifi_pass") && web.arg("wifi_pass").length()) prefs.putString("wifi_pass", web.arg("wifi_pass"));
+  if (web.hasArg("mq_pass")   && web.arg("mq_pass").length())   prefs.putString("mq_pass",   web.arg("mq_pass"));
+  prefs.end();
+  web.send(200, "text/html",
+    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<body style='font:15px system-ui;background:#111;color:#ddd;padding:2rem'>"
+    "Saved. Rebooting - this page will stop responding for a few seconds.");
+  delay(250);
+  ESP.restart();
+}
+
+static void handleForget() {
+  if (!webAuthed()) return;
+  web.send(200, "text/html",
+    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<body style='font:15px system-ui;background:#111;color:#ddd;padding:2rem'>"
+    "Reverted to built-in settings. Rebooting.");
+  delay(250);
+  cfgPanic();
+}
+
 // ---- receive: the device talks back ----------------------------------------
 // Mirror of the device's assembler. Same contiguous CRC, same refusal to
 // believe a length byte that cannot fit.
@@ -454,18 +590,19 @@ static void pushLocalTime() {
 }
 
 void setup() {
-  TO_DISPLAY.begin(115200);             // native USB CDC to the display MCU
+  TO_DISPLAY.begin(115200);
+  cfgLoad();             // native USB CDC to the display MCU
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   // Power saving costs ~300ms of latency, which is invisible for an hourly
   // time sync and very visible for a notification that should appear now.
   WiFi.setSleep(false);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  configTzTime(TZ_POSIX, NTP1);         // NTP + timezone/DST handled here
+  WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+  configTzTime(cfg.tz.c_str(), cfg.ntp.c_str());   // NTP + TZ/DST handled here
 
-  if (strlen(MQTT_HOST)) {
-    mqtt.setServer(MQTT_HOST, (uint16_t)atoi(MQTT_PORT));
+  if (cfg.mqttHost.length()) {
+    mqtt.setServer(cfg.mqttHost.c_str(), (uint16_t)cfg.mqttPort.toInt());
     mqtt.setCallback(onMqtt);
     mqtt.setSocketTimeout(2);           // do not sit on a dead broker
     mqtt.setBufferSize(768);            // discovery payloads exceed the 256 default
@@ -491,7 +628,14 @@ void loop() {
   rx::poll();
 
 
-  if (WiFi.status() != WL_CONNECTED) return;
+  // Config set through the web page can lock us off the network, and the
+  // network is how firmware gets here. If overrides are in play and we still
+  // have not associated after 90s, assume they are the problem and fall back
+  // to the compiled-in values, which are known to have worked.
+  if (WiFi.status() != WL_CONNECTED) {
+    if (cfgOverridden && millis() > 90000UL) cfgPanic();
+    return;
+  }
 
   // OTA needs the network up, so arm it on first association rather than in
   // setup(). Deliberately no progress callbacks: they would print to Serial,
@@ -501,8 +645,13 @@ void loop() {
     ArduinoOTA.setHostname(OTA_HOST);
     if (OTA_PASS[0]) ArduinoOTA.setPassword(OTA_PASS);
     ArduinoOTA.begin();
+    web.on("/", HTTP_GET, handleRoot);
+    web.on("/save", HTTP_POST, handleSave);
+    web.on("/forget", HTTP_GET, handleForget);
+    web.begin();
     otaReady = true;
   }
+  web.handleClient();
   // Blocks only while an update is actually in flight, and the device rides
   // that out on its own RTC — which is the entire point of it keeping time.
   ArduinoOTA.handle();

@@ -33,18 +33,24 @@ or the CLI:
 
 ## Status
 
-**P0-P2 are done and running on hardware.** Three faces (analog hands, digital,
-spinning cube) draw from the DS3232, the ESP32 bridge disciplines the RTC from
-NTP over a USB-host link with no wiring, and the host can push arbitrary vector
-scenes and banners.
+**The roadmap is complete and running on hardware.** Three built-in faces
+(analog hands, digital, spinning cube) draw from the DS3232; the ESP32 bridge
+disciplines the RTC from NTP over a USB-host link with no wiring; the host can
+push arbitrary vector scenes, banners, and *face templates* that keep telling
+the time on their own; and the clock appears in Home Assistant over MQTT
+discovery with controls, diagnostics and device triggers.
+
+The bridge also serves a config page at `http://scope-clock-bridge.local/`
+(guarded by the OTA password) for setting Wi-Fi, MQTT and timezone without
+rebuilding.
 
 | phase | what | state |
 |-------|------|-------|
 | P0 | render engine: vectors, stroke font, RTC | done |
 | P1 | framed link, real CRC, encoder/button, NTP `SET_TIME` | done |
 | P2 | `PushList` + `Banner` — true thin client | done |
-| P3 | MQTT / Home Assistant on the bridge | next |
-| P4 | face templates, web config | |
+| P3 | MQTT / Home Assistant on the bridge | done |
+| P4 | face templates, web config | done |
 
 Flashing: `pio run -t upload` in `display-teensy/`, and
 `pio run -e atoms3u_ota -t upload` in `bridge-esp32/` (over Wi-Fi).
