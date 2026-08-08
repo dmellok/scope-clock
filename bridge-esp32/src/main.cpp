@@ -10,6 +10,7 @@
 #include <time.h>
 #include "protocol.h"     // shared/
 #include "webui.h"
+#include "soc/usb_serial_jtag_struct.h"
 
 // ---- config ----
 // Supplied at build time from .env by load_env.py (see .env.example). That file
@@ -492,6 +493,16 @@ static void mqttConnect() {
   mqtt.subscribe(topic("scene/set").c_str());
 }
 
+// The device reports how long it has been deaf; we are still hearing it, so
+// the report arrives even when nothing we send does. Recorded and surfaced,
+// but NOT acted on automatically — see the note in the web UI. Dropping the
+// D+ pull-up does detach the device, but it does not re-enumerate cleanly
+// afterwards, and it takes the working uplink down with it. Only a power cycle
+// is known to clear this.
+static uint16_t lastSilent = 0;
+
+static void checkLink(uint16_t silentS) { lastSilent = silentS; }
+
 // Telemetry and input, republished for Home Assistant. Only on change, so a
 // 5s status heartbeat does not become 5s of MQTT traffic.
 static void publishStatus(const proto::StatusPayload& s) {
@@ -555,6 +566,7 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
       proto::StatusPayload s;
       memcpy(&s, p, sizeof s);          // the payload need not be aligned
       lastStatus = s; haveStatus = true;
+      checkLink(s.linkSilentS);
       publishStatus(s);
       break;
     }
@@ -609,7 +621,8 @@ static void handleState() {
   j += "\"mqtt\":"  + String(mqtt.connected() ? 1 : 0) + ",";
   j += "\"rssi\":"  + String(WiFi.RSSI()) + ",";
   j += "\"ssid\":\"" + cfg.wifiSsid + "\",";
-  j += "\"ip\":\""   + WiFi.localIP().toString() + "\"}";
+  j += "\"ip\":\""   + WiFi.localIP().toString() + "\",";
+  j += "\"silent\":" + String(haveStatus ? (int)lastSilent : -1) + "}";
   web.send(200, "application/json", j);
 }
 

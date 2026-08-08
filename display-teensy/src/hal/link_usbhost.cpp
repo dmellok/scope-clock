@@ -113,6 +113,12 @@ void send(uint8_t id, const uint8_t* p, uint8_t len) {
   userial.write(proto::frameCrc(id, len, p));
 }
 
+uint16_t silentSeconds() {
+  if (!everHeard) return 0xFFFF;
+  const uint32_t s = (millis() - lastFrameMs) / 1000UL;
+  return s > 0xFFFE ? 0xFFFE : (uint16_t)s;
+}
+
 void sendHello() {
   const uint8_t caps[] = { 1 /*fw major*/, 0 /*fw minor*/ };
   send(static_cast<uint8_t>(proto::Msg::Hello), caps, sizeof(caps));

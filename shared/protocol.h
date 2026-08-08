@@ -129,6 +129,11 @@ struct __attribute__((packed)) StatusPayload {
   uint32_t frameUs;      // last render duration
   uint16_t hz;           // refresh target
   uint16_t setAgeS;      // seconds since last SetTime, 0xFFFF = never
+  // Seconds since the device last RECEIVED anything. The link can fail in one
+  // direction only — the device's uplink keeps working while the downlink is
+  // dead — so this is how the far end learns it has gone deaf. Nothing else
+  // can tell it: from the host's side its own writes still look successful.
+  uint16_t linkSilentS;
   uint8_t  mode;         // 0 = local face, 1 = pushed list
   uint8_t  faceId;
   uint8_t  brightness;

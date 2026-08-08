@@ -108,7 +108,14 @@ D -430 -1215 9 %H:%M:%S"></textarea>
     <tr><td>Device uptime</td><td id="s-up">--</td></tr>
     <tr><td>MQTT</td><td id="s-mqtt">--</td></tr>
     <tr><td>Wi-Fi</td><td id="s-wifi">--</td></tr>
+    <tr><td>Device last heard us</td><td id="s-silent">--</td></tr>
   </table>
+  <p class="hint">The link can fail one way only: the device stops hearing us
+    while we still hear it. The signature is the silence above climbing while
+    everything else looks healthy. There is no software cure yet &mdash;
+    dropping the USB pull-up detaches the device but does not re-enumerate
+    cleanly, and takes the working direction down with it. If you see this,
+    power cycle the clock.</p>
 </fieldset>
 
 <p class="hint"><svg class="i"><use href="#i-gear"/></svg>
@@ -146,6 +153,8 @@ function poll(){
     el("s-up").textContent=dur(s.up);
     el("s-mqtt").innerHTML=s.mqtt?"connected":'<span class="warn">offline</span>';
     el("s-wifi").textContent=s.ssid+" · "+s.rssi+"dBm · "+s.ip;
+    el("s-silent").innerHTML=(s.silent<0||s.silent==65535)?"--":
+      (s.silent+"s ago"+(s.silent>20?' <span class="warn">going deaf</span>':""));
   }).catch(function(){el("sub").textContent="bridge unreachable"});
 }
 poll();setInterval(poll,2000);

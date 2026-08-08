@@ -62,6 +62,7 @@ void sendStatus(const DeviceState& dev, const ClockState& clk) {
   s.faceId     = dev.faceId;
   s.brightness = dev.brightness;
   s.rtcOk      = clk.rtcPresent ? 1 : 0;
+  s.linkSilentS = hal::link::silentSeconds();
   hal::link::send(static_cast<uint8_t>(proto::Msg::Status),
                   reinterpret_cast<const uint8_t*>(&s), sizeof(s));
 }

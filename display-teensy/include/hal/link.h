@@ -12,4 +12,5 @@ namespace hal { namespace link {
   void poll(DeviceState& dev, ClockState& clk);   // ingest host frames -> mutate state
   void sendHello();
   void send(uint8_t msgId, const uint8_t* payload, uint8_t len);
+  uint16_t silentSeconds();   // since anything was last received
 }}
