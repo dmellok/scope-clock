@@ -107,6 +107,14 @@ clone it alongside.
   is handled in the USB ISR, which keeps running when the main loop does not).
   Worth knowing against the OTA-rejection reasoning below: a *hang* is not the
   same as a failed FlasherX leaving no valid application.
+- **The tube is ROUND; the draw list is not.** An animation laid out in a
+  rectangle spends beam time in the corners where there is no phosphor. The
+  matrix face gives each column the chord the circle actually allows it —
+  half-height sqrt(R^2 - x^2) — and a trail scaled to that chord, or the short
+  outer columns spend their whole cycle off the face and the rim looks empty.
+  To check an animation's envelope rather than one frame, accumulate lit dots
+  over a few hundred frames (`scratchpad/hostsim/cover.cpp`) and look at the
+  shape: it also counts any ink that lands outside the rim.
 - **A face must stay inside ±1200; an overlay may use ±1250.** `faces6` enforces
   the former, which is why the matrix rain's TOP is the edge less one glyph
   height — the bound is on the text BASELINE and ink runs upward from it.

@@ -8,6 +8,7 @@
 #include "state.h"
 #include "drawlist.h"
 #include "vector.h"
+#include "text.h"
 #include <math.h>
 
 namespace faces { namespace impl {
@@ -222,62 +223,107 @@ void tunnel(const ClockState&, DrawList& d) {
   }
 }
 
-// Digital rain. The one effect everybody asks a green phosphor tube for, and it
-// suits this one: no colour is needed because the depth cue that matters on a
-// CRT is redraw count, so the leading glyph is simply drawn twice and burns
-// brighter than its tail exactly as it should.
+// Digital rain, filling the round face of the tube.
 //
-// Cost is the constraint. kLineStride is 1, so a dot lands on every unit of beam
-// travel and a glyph costs roughly its own perimeter — a few hundred dots. Nine
-// columns of six is about as much rain as the frame budget will carry; the sim
-// is what settled those two numbers.
+// No colour is needed: the depth cue that matters on a CRT is redraw count, so
+// the leading glyph is simply drawn twice and burns brighter than its tail
+// exactly as it should.
+//
+// The screen is a CIRCLE, which is the whole geometry problem here. Laid out as
+// a rectangle, the outer columns run off into glass with no phosphor behind it —
+// beam time spent on nothing. So each column knows its own chord: at x, the
+// tube gives it a half-height of sqrt(R^2 - x^2), and the drop falls between
+// those two ends. Short columns near the rim, long ones through the middle,
+// which is what a round screen full of rain actually looks like.
+//
+// Cost is the other constraint. kLineStride is 1, so a dot lands on every unit
+// of beam travel and a glyph costs roughly its own perimeter. Columns near the
+// rim are nearly free because they hold two or three glyphs, which is what pays
+// for having enough of them to fill the middle.
 void matrix(const ClockState&, DrawList& d) {
-  constexpr int COLS = 12, TRAIL = 7, SCALE = 6;
-  constexpr int CELL = SCALE * 20 + 26;      // glyph height plus a little air
-  // TOP bounds the BASELINE, and ink runs upward from there by the cell height,
-  // so the limit is the edge less one glyph — at 1150 the tops of the highest
-  // characters were being clipped off at 1270. The edge in question is the
-  // ±1200 working one a FACE must respect, not the ±1250 an overlay may use.
-  constexpr int TOP = 1200 - SCALE * 20 - 8, BOT = -1195;
+  constexpr int COLS = 19, TRAIL = 9, SCALE = 6;
+  constexpr int CELL = SCALE * 20 + 26;   // glyph height plus a little air
+  // A few units inside the 1200 working edge: the corner test bounds the glyph
+  // by its nominal cell, and some glyphs draw a whisker past that, which had the
+  // topmost ink grazing 1199.
+  constexpr int R    = 1185;              // the working radius of the face
+  constexpr int32_t R2 = (int32_t)R * R;
   // Katakana is what the film used and this font has none, so: digits and the
   // angular half of the alphabet, which keeps the texture busy and legible.
   static const char kGlyphs[] = "0123456789ABCDEFHJKLMNPRSTVWXYZ*+=<>/\\|";
   constexpr int NG = (int)(sizeof(kGlyphs) - 1);
 
-  static int16_t headY[COLS], speed[COLS];
+  static int16_t headY[COLS], speed[COLS], colX[COLS], halfH[COLS];
+  static uint8_t tlen[COLS];          // trail length, per column's chord
   static char    cell[COLS][TRAIL][2];
   static bool    seeded = false;
 
-  auto respawn = [&](int c, bool stagger) {
-    // Staggered on the first frame only, so the rain does not start as one
-    // horizontal rank marching down the screen together.
-    headY[c] = (int16_t)(TOP + (stagger ? (int)(xr() % 2600) : (int)(xr() % 600)));
+  // Every corner of the glyph's box must be on the phosphor. Squared distances,
+  // so no roots in the per-glyph path.
+  auto onFace = [&](int gx, int gy, int gw, int gh) {
+    const int32_t xs[2] = { gx, gx + gw }, ys[2] = { gy, gy + gh };
+    for (int i = 0; i < 2; ++i)
+      for (int j = 0; j < 2; ++j)
+        if (xs[i]*xs[i] + ys[j]*ys[j] > R2) return false;
+    return true;
+  };
+
+  auto reroll = [&](int c) {
     speed[c] = (int16_t)(9 + (int)(xr() % 22));
     for (int r = 0; r < TRAIL; ++r) {
       cell[c][r][0] = kGlyphs[xr() % NG];
       cell[c][r][1] = '\0';
     }
   };
-  if (!seeded) { for (int c = 0; c < COLS; ++c) respawn(c, true); seeded = true; }
+
+  if (!seeded) {
+    for (int c = 0; c < COLS; ++c) {
+      // Columns are spread across the diameter; the chord is what each gets.
+      // The nominal glyph width is taken off so a column sits on the phosphor
+      // rather than starting at its left edge.
+      // Space the column CENTRES evenly, then step back half a glyph, because
+      // d.text() places the left edge. Spacing the left edges instead leaves the
+      // whole field sitting half a glyph to the right.
+      const int gw = txt::inkWidth(SCALE, "M");
+      const int span = R - gw;
+      const int32_t x = -span + c * (2 * span / (COLS - 1));
+      colX[c] = (int16_t)(x - gw / 2);
+      const int32_t inside = R2 - x * x;
+      halfH[c] = (int16_t)(inside > 0 ? (int)sqrtf((float)inside) : 0);
+      // Trail scaled to the chord. A full-length trail on a short outer column
+      // spends most of its cycle above the phosphor with nothing visible, which
+      // is why the rim looked empty: give each column a trail it can actually
+      // show, and the short ones cycle quickly and keep the edge busy.
+      int t = 2 * halfH[c] / CELL + 2;
+      if (t > TRAIL) t = TRAIL;
+      if (t < 2) t = 2;
+      tlen[c] = (uint8_t)t;
+      // Staggered, so the rain does not start as one rank marching down together.
+      headY[c] = (int16_t)(halfH[c] + (int)(xr() % 2200));
+      reroll(c);
+    }
+    seeded = true;
+  }
 
   for (int c = 0; c < COLS; ++c) {
     headY[c] = (int16_t)(headY[c] - speed[c]);
-    // Gone once the whole trail has cleared the bottom edge.
-    if (headY[c] + TRAIL * CELL < BOT) { respawn(c, false); continue; }
+    // Gone once the whole trail has cleared this column's own bottom end.
+    if (headY[c] + tlen[c] * CELL < -halfH[c]) {
+      headY[c] = (int16_t)(halfH[c] + (int)(xr() % 500));
+      reroll(c);
+      continue;
+    }
 
     // One glyph somewhere in the column flickers to something else each frame.
     // That shimmer is most of what sells the effect, and it costs nothing.
-    if ((xr() & 3) == 0) {
-      const int r = (int)(xr() % TRAIL);
-      cell[c][r][0] = kGlyphs[xr() % NG];
-    }
+    if ((xr() & 3) == 0) cell[c][(int)(xr() % tlen[c])][0] = kGlyphs[xr() % NG];
 
-    const int x = -1080 + c * (2160 / (COLS - 1));
-    for (int r = 0; r < TRAIL; ++r) {
+    for (int r = 0; r < tlen[c]; ++r) {
       const int y = headY[c] + r * CELL;      // r 0 is the head, at the bottom
-      if (y < BOT || y > TOP) continue;
-      d.text(x, y, SCALE, cell[c][r]);
-      if (r == 0) d.text(x, y, SCALE, cell[c][r]);   // the head burns brighter
+      const int w = txt::inkWidth(SCALE, cell[c][r]);
+      if (!onFace(colX[c], y, w, SCALE * 20)) continue;
+      d.text(colX[c], y, SCALE, cell[c][r]);
+      if (r == 0) d.text(colX[c], y, SCALE, cell[c][r]);   // the head burns brighter
     }
   }
 }
