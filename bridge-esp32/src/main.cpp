@@ -9,6 +9,7 @@
 #include <Preferences.h>
 #include <time.h>
 #include "protocol.h"     // shared/
+#include "webui.h"
 
 // ---- config ----
 // Supplied at build time from .env by load_env.py (see .env.example). That file
@@ -277,6 +278,8 @@ struct BigList {
 
 static bool rxHello = false;      // device (re)introduced itself
 static bool statusFresh = true;   // force a full republish after (re)connect
+static proto::StatusPayload lastStatus{};   // newest telemetry, for the web UI
+static bool haveStatus = false;
 static void onFrame(uint8_t id, const uint8_t* p, uint8_t len);
 
 static WiFiClient   net;
@@ -291,6 +294,8 @@ constexpr uint8_t kFaceCount = sizeof(kFaceNames) / sizeof(kFaceNames[0]);
 static uint8_t  curFace       = 0;
 static uint8_t  curBrightness = 255;
 static uint16_t bannerMs      = 8000;
+
+static void pushScene(const String& msg);
 
 static String topic(const char* leaf) { return cfg.mqttPrefix + "/" + leaf; }
 
@@ -368,6 +373,13 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
     sendFrame(proto::Msg::SetBrightness, p, 1);
     publishState();
   } else if (tp == topic("scene/set")) {
+    pushScene(msg);
+  }
+}
+
+// Shared by MQTT and the web API.
+static void pushScene(const String& msg) {
+  {
     // Empty payload means "give the clock back to its own face".
     if (msg.length() == 0) { sendSetMode(0, curFace); return; }
     // Staged, so a traced drawing is not capped at the ~34 items a single
@@ -542,6 +554,7 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
       if (len < sizeof(proto::StatusPayload)) break;
       proto::StatusPayload s;
       memcpy(&s, p, sizeof s);          // the payload need not be aligned
+      lastStatus = s; haveStatus = true;
       publishStatus(s);
       break;
     }
@@ -577,6 +590,54 @@ static String field(const char* label, const char* name, const String& val, bool
        + (secret ? " type='password' placeholder='(unchanged)'"
                  : String(" value='") + val + "'")
        + "></label>";
+}
+
+// The page polls this; keep it small and allocation-light.
+static void handleState() {
+  const proto::StatusPayload& s = lastStatus;
+  String j = "{";
+  j += "\"face\":\"" + String(curFace < kFaceCount ? kFaceNames[curFace] : "?") + "\",";
+  j += "\"mode\":" + String(haveStatus ? s.mode : 0) + ",";
+  j += "\"bri\":"  + String(curBrightness) + ",";
+  j += "\"frame\":" + String(haveStatus ? s.frameUs : 0) + ",";
+  j += "\"hz\":"    + String(haveStatus ? s.hz : 0) + ",";
+  j += "\"rtc\":"   + String(haveStatus && s.rtcOk ? 1 : 0) + ",";
+  // -1 rather than 65535: "never" is a state the UI should say out loud, not a
+  // number it should print.
+  j += "\"sync\":"  + String(!haveStatus || s.setAgeS == 0xFFFF ? -1 : (int)s.setAgeS) + ",";
+  j += "\"up\":"    + String(haveStatus ? s.uptimeS : 0) + ",";
+  j += "\"mqtt\":"  + String(mqtt.connected() ? 1 : 0) + ",";
+  j += "\"rssi\":"  + String(WiFi.RSSI()) + ",";
+  j += "\"ssid\":\"" + cfg.wifiSsid + "\",";
+  j += "\"ip\":\""   + WiFi.localIP().toString() + "\"}";
+  web.send(200, "application/json", j);
+}
+
+// The API mirrors the MQTT topics exactly rather than inventing a second set of
+// semantics — same handlers, same effects, so the two cannot drift apart.
+static void handleApi() {
+  const String uri = web.uri();
+  // The page posts a raw body, which lands in arg("plain"). Anything sending
+  // form-encoded instead (curl --data, most HTTP helpers) has its body parsed
+  // into arg names, so fall back to the first of those rather than appearing
+  // to accept the request and silently doing nothing.
+  String body = web.arg("plain");
+  if (!body.length() && web.args() > 0) body = web.argName(0);
+  if (uri.endsWith("/face")) {
+    for (uint8_t i = 0; i < kFaceCount; ++i)
+      if (body.equalsIgnoreCase(kFaceNames[i])) { curFace = i; break; }
+    sendSetMode(0, curFace);
+  } else if (uri.endsWith("/brightness")) {
+    const long v = body.toInt();
+    curBrightness = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
+    const uint8_t p[1] = { curBrightness };
+    sendFrame(proto::Msg::SetBrightness, p, 1);
+  } else if (uri.endsWith("/banner")) {
+    sendBanner(body.c_str(), bannerMs);
+  } else if (uri.endsWith("/scene")) {
+    pushScene(body);
+  }
+  web.send(200, "text/plain", "ok");
 }
 
 static void handleRoot() {
@@ -738,7 +799,13 @@ void loop() {
     ArduinoOTA.setHostname(OTA_HOST);
     if (OTA_PASS[0]) ArduinoOTA.setPassword(OTA_PASS);
     ArduinoOTA.begin();
-    web.on("/", HTTP_GET, handleRoot);
+    web.on("/", HTTP_GET, [] { web.send_P(200, "text/html", WEB_UI); });
+    web.on("/api/state", HTTP_GET, handleState);
+    web.on("/api/face", HTTP_POST, handleApi);
+    web.on("/api/brightness", HTTP_POST, handleApi);
+    web.on("/api/banner", HTTP_POST, handleApi);
+    web.on("/api/scene", HTTP_POST, handleApi);
+    web.on("/config", HTTP_GET, handleRoot);
     web.on("/save", HTTP_POST, handleSave);
     web.on("/forget", HTTP_GET, handleForget);
     web.begin();
