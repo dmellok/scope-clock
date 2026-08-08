@@ -197,8 +197,12 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len);
 static WiFiClient   net;
 static PubSubClient mqtt(net);
 
-static const char* const kFaceNames[] = { "hands", "digital", "cube" };
-constexpr uint8_t kFaceCount = 3;
+// Must match faces.cpp on the device, in order — Status reports an index and
+// this is what turns it back into a name.
+static const char* const kFaceNames[] = {
+  "hands", "numbers", "digital", "datetime", "cube", "lissajous", "starfield"
+};
+constexpr uint8_t kFaceCount = sizeof(kFaceNames) / sizeof(kFaceNames[0]);
 static uint8_t  curFace       = 0;
 static uint8_t  curBrightness = 255;
 static uint16_t bannerMs      = 8000;
@@ -304,7 +308,7 @@ static void publishDiscovery() {
 
   j = String("{\"name\":\"Face\",\"uniq_id\":\"" MQTT_PREFIX "_face\",")
       + "\"cmd_t\":\"" + topic("face/set") + "\",\"stat_t\":\"" + topic("face/state") + "\","
-      + "\"options\":[\"hands\",\"digital\",\"cube\"],"
+      + "\"options\":[\"hands\",\"numbers\",\"digital\",\"datetime\",\"cube\",\"lissajous\",\"starfield\"],"
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
   mqtt.publish((String("homeassistant/select/") + cfg.mqttPrefix + "/face/config").c_str(), j.c_str(), true);
 

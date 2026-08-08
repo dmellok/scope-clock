@@ -19,7 +19,10 @@ struct Item {
 };
 
 struct DrawList {
-  static constexpr uint8_t CAP = 32;
+  // Curves need segments, and a Lissajous at 32 of them looks like a polygon.
+  // The wire format cannot reach this: MAX_PAYLOAD caps a pushed list at ~34
+  // items regardless, so this only buys headroom for locally generated faces.
+  static constexpr uint8_t CAP = 128;
   Item     items[CAP];
   uint8_t  count = 0;
 

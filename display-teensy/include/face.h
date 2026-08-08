@@ -12,4 +12,11 @@ namespace faces {
   void      registerBuiltins();
   RenderFn  current(const DeviceState& dev);
   uint8_t   count();
+
+  // Two-level navigation, so the two physical controls do different jobs:
+  // the knob moves between kinds of face, the button changes the style within
+  // the kind you are on. Each family remembers the variant you last chose, so
+  // knobbing away and back returns what you left rather than resetting.
+  uint8_t   nextFamily(uint8_t faceId, int dir);
+  uint8_t   nextVariant(uint8_t faceId);
 }

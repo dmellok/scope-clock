@@ -7,6 +7,7 @@
 #include "drawlist.h"
 #include "vector.h"
 #include "text.h"
+#include <stdio.h>
 
 namespace faces {
 namespace {
@@ -48,9 +49,12 @@ void digital(const ClockState& c, DrawList& d) {
   d.text(0, 0, 30, ss);
 }
 
-// Roman numerals, in clock order starting at XII.
-const char* const kNumerals[12] = {
+// Dial labels, in clock order starting at twelve.
+const char* const kRoman[12] = {
   "XII", "I", "II", "III", "IIII", "V", "VI", "VII", "VIII", "IX", "X", "XI"
+};
+const char* const kArabic[12] = {
+  "12", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"
 };
 constexpr int kDialRadius  = 1000;
 constexpr int kNumeralScale = 10;
@@ -64,14 +68,14 @@ constexpr int kNumeralScale = 10;
 // but slightly irregular. Deriving the position from the angle and the glyph's
 // own ink width instead makes it exact, and self-adjusting if the scale or
 // dial radius ever change.
-void numerals(DrawList& d) {
+void numerals(DrawList& d, const char* const* label) {
   for (int h = 0; h < 12; ++h) {
     const int a  = (h * vec::kSteps) / 12;             // 0 = XII, clockwise
     const int cx = (int)((kDialRadius * vec::sinT(a)) >> 16);
     const int cy = (int)((kDialRadius * vec::cosT(a)) >> 16);
-    d.text(cx - txt::inkWidth(kNumeralScale, kNumerals[h]) / 2,
+    d.text(cx - txt::inkWidth(kNumeralScale, label[h]) / 2,
            cy - txt::height(kNumeralScale) / 2,         // baseline, not centre
-           kNumeralScale, kNumerals[h]);
+           kNumeralScale, label[h]);
   }
 }
 
@@ -79,8 +83,8 @@ void numerals(DrawList& d) {
 // hands are drawn twice so they come out brighter than the second hand — on a
 // CRT, brightness is redraw count. The numerals carry real positions, which
 // also opts this list out of txt::centerLines.
-void hands(const ClockState& c, DrawList& d) {
-  numerals(d);
+void dial(const ClockState& c, DrawList& d, const char* const* label) {
+  numerals(d, label);
   d.circle(0, 0, 90);                                   // hub
 
   const int minAngle = c.second / 15 + c.minute * 4;
@@ -91,6 +95,9 @@ void hands(const ClockState& c, DrawList& d) {
   hand(d, 2000, minAngle);                              // again, for brightness
   hand(d, 1500, hrAngle);
 }
+
+void hands(const ClockState& c, DrawList& d)   { dial(c, d, kRoman);  }
+void numbers(const ClockState& c, DrawList& d) { dial(c, d, kArabic); }
 
 // ---- spinning cube ---------------------------------------------------------
 // The thing a vector display does that a raster one cannot: twelve straight
@@ -148,7 +155,133 @@ void cube(const ClockState& c, DrawList& d) {
   }
 }
 
-RenderFn kFaces[] = { hands, digital, cube };
+// ---- date and time ---------------------------------------------------------
+// Weekday, time, date — three rows laid out by txt::centerLines, which is what
+// the '\n' terminators are for: the last item of a row carries it.
+const char* const kWday[7] = {
+  "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
+};
+const char* const kMon[12] = {
+  "Jan", "Feb", "March", "April", "May", "June",
+  "July", "Aug", "Sept", "Oct", "Nov", "Dec"
+};
+
+void datetime(const ClockState& c, DrawList& d) {
+  static char l1[16], l2[20], l3[32];
+  const int h = c.hr12 ? to12(c.hour) : c.hour;
+
+  snprintf(l1, sizeof l1, "%s\n", kWday[(unsigned)c.wday % 7]);
+  snprintf(l2, sizeof l2, "%d:%02d:%02d\n", h, c.minute, c.second);
+  snprintf(l3, sizeof l3, "%d %s 20%02d\n",
+           c.day, kMon[(unsigned)(c.month - 1) % 12], c.year);
+
+  // 22 not 26 on the time row: eight characters at 26 measure ~2700 units
+  // against a 2500 field, so it would run off both edges.
+  d.text(0, 0, 12, l1);
+  d.text(0, 0, 22, l2);
+  d.text(0, 0, 12, l3);
+}
+
+// ---- Lissajous -------------------------------------------------------------
+// The figure an oscilloscope makes when you feed it two sines, and the reason
+// anyone points a camera at one. Drawn as a chain of short segments; the ends
+// meet, so the blanked hop between them costs no beam travel.
+constexpr int kLisSegs = 96;
+constexpr int kLisAmp  = 1080;
+
+void lissajous(const ClockState& c, DrawList& d) {
+  (void)c;
+  static uint16_t tick = 0;
+  ++tick;
+  // A slowly drifting phase is what makes the figure appear to rotate and
+  // fold through itself rather than sit still.
+  const int phase = (int)(tick * 3);
+  const int a = 3, b = 4;              // frequency ratio
+
+  int px = 0, py = 0;
+  for (int i = 0; i <= kLisSegs; ++i) {
+    const int t = (i * vec::kSteps) / kLisSegs;
+    const int x = (int)((kLisAmp * vec::sinT(a * t + phase)) >> 16);
+    const int y = (int)((kLisAmp * vec::cosT(b * t)) >> 16);
+    if (i) d.line(px, py, x, y);
+    px = x; py = y;
+  }
+}
+
+// ---- starfield -------------------------------------------------------------
+// Each star is drawn as the streak between where it was and where it is, which
+// is both how it reads as motion and how you draw a point on a display that
+// only knows lines.
+// Sparse is dim: brightness is beam-on time per refresh, and 30 short streaks
+// leave the tube idle most of the frame however long the dwell gets. So: more
+// stars, and a tail longer than one frame's travel so each streak is a streak
+// rather than a tick. The tail is decoupled from the speed on purpose —
+// lengthening it brightens the field without making everything rush past.
+constexpr int kStars     = 64;
+constexpr int kStarFocal = 700;
+constexpr int kStarSpeed = 30;
+constexpr int kStarTail  = 150;
+constexpr int kStarNear  = 260;
+constexpr int kStarFar   = 2600;
+constexpr int kStarEdge  = 1180;      // past this it has flown by
+
+int32_t stx[kStars], sty[kStars], stz[kStars];
+uint32_t srng = 0x1234567u;
+
+inline uint32_t sxr() {               // xorshift: deterministic and tiny
+  srng ^= srng << 13; srng ^= srng >> 17; srng ^= srng << 5; return srng;
+}
+
+void respawn(int i) {
+  stx[i] = (int32_t)(sxr() % 2401) - 1200;
+  sty[i] = (int32_t)(sxr() % 2401) - 1200;
+  stz[i] = kStarNear + (int32_t)(sxr() % (kStarFar - kStarNear));
+}
+
+void starfield(const ClockState& c, DrawList& d) {
+  (void)c;
+  static bool seeded = false;
+  if (!seeded) { for (int i = 0; i < kStars; ++i) respawn(i); seeded = true; }
+
+  for (int i = 0; i < kStars; ++i) {
+    stz[i] -= kStarSpeed;
+    if (stz[i] <= kStarNear) { respawn(i); continue; }
+    const int32_t z1 = stz[i];
+    const int32_t z0 = z1 + kStarTail;
+
+    const int x0 = (int)(stx[i] * kStarFocal / z0);
+    const int y0 = (int)(sty[i] * kStarFocal / z0);
+    const int x1 = (int)(stx[i] * kStarFocal / z1);
+    const int y1 = (int)(sty[i] * kStarFocal / z1);
+
+    // Off the edge means it has passed the viewer. Clamping instead would
+    // smear it along the border, which reads as a bug rather than a star.
+    if (x1 < -kStarEdge || x1 > kStarEdge || y1 < -kStarEdge || y1 > kStarEdge) {
+      respawn(i);
+      continue;
+    }
+    d.line(x0, y0, x1, y1);
+  }
+}
+
+RenderFn kFaces[] = { hands, numbers, digital, datetime, cube, lissajous, starfield };
+
+// Contiguous runs of kFaces above. Keep the two in step.
+struct Family { uint8_t first, count; };
+const Family kFamilies[] = {
+  { 0, 2 },   // analog:    roman dial, numbered dial
+  { 2, 2 },   // digital:   time, time with date
+  { 4, 3 },   // animation: cube, Lissajous, starfield
+};
+constexpr uint8_t kFamilyCount = sizeof(kFamilies) / sizeof(kFamilies[0]);
+uint8_t lastVariant[kFamilyCount] = { 0, 0, 0 };
+
+uint8_t familyOf(uint8_t faceId) {
+  for (uint8_t f = 0; f < kFamilyCount; ++f)
+    if (faceId >= kFamilies[f].first &&
+        faceId <  kFamilies[f].first + kFamilies[f].count) return f;
+  return 0;
+}
 
 } // namespace
 
@@ -156,6 +289,25 @@ void     registerBuiltins() { /* static table for now */ }
 uint8_t  count() { return sizeof(kFaces) / sizeof(kFaces[0]); }
 RenderFn current(const DeviceState& dev) {
   return kFaces[dev.faceId < count() ? dev.faceId : 0];
+}
+
+uint8_t nextFamily(uint8_t faceId, int dir) {
+  const uint8_t f = familyOf(faceId);
+  lastVariant[f] = (uint8_t)(faceId - kFamilies[f].first);   // remember where we were
+  int n = (int)f + (dir >= 0 ? 1 : -1);
+  if (n < 0) n = kFamilyCount - 1;
+  if (n >= kFamilyCount) n = 0;
+  const Family& fam = kFamilies[n];
+  const uint8_t v = lastVariant[n] < fam.count ? lastVariant[n] : 0;
+  return (uint8_t)(fam.first + v);
+}
+
+uint8_t nextVariant(uint8_t faceId) {
+  const uint8_t f = familyOf(faceId);
+  const Family& fam = kFamilies[f];
+  const uint8_t v = (uint8_t)((faceId - fam.first + 1) % fam.count);
+  lastVariant[f] = v;
+  return (uint8_t)(fam.first + v);
 }
 
 } // namespace faces

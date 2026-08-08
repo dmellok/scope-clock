@@ -10,6 +10,7 @@
 #include "hal/rtc.h"
 #include "hal/input.h"
 #include "hal/link.h"
+#include "hal/watchdog.h"
 
 static ClockState  clk;
 static DeviceState dev;
@@ -66,6 +67,10 @@ void setup() {
 }
 
 void loop() {
+  // Unconditionally first: as long as the loop turns over, the beam is moving.
+  hal::wdt::feed();
+  hal::wdt::armAfter(15000);     // only once this firmware has proven itself
+
   hal::link::poll(dev, clk);     // 1. host commands in (non-blocking)
   hal::input::poll(dev);         // 2. encoder/button out
 

@@ -121,13 +121,10 @@ void poll(DeviceState& dev) {
   interrupts();
 
   if (detents != 0) {
-    // Turning the knob picks the next face, as it did originally. Faces stay
-    // local so the clock keeps working with no host attached; the host is only
-    // told that the knob moved.
-    const int n = faces::count();
-    int f = ((int)dev.faceId + detents) % n;
-    if (f < 0) f += n;
-    dev.faceId = (uint8_t)f;
+    // The knob moves between kinds of face; the button (below) changes the
+    // style within one. Two controls, two jobs. Faces stay local so the clock
+    // keeps working with no host attached — the host is only told it moved.
+    dev.faceId = faces::nextFamily(dev.faceId, detents);
     // The knob is the way out of anything the host has pushed. Without this a
     // bad scene could only be cleared over the network, which is a poor place
     // to leave a physical object with a physical control on it.
@@ -147,7 +144,11 @@ void poll(DeviceState& dev) {
       sendButton(1);                                 // long, reported on hold
     }
   } else {
-    if (butDown && !longSent) sendButton(0);         // tap, reported on release
+    if (butDown && !longSent) {
+      dev.faceId = faces::nextVariant(dev.faceId);   // roman dial <-> numbered
+      dev.mode   = Mode::Face;
+      sendButton(0);                                 // tap, reported on release
+    }
     butHist = 0;
     butDown = false;
   }
