@@ -100,7 +100,8 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 //
 // Banner       [ms:u16][priority:u8][chars...]   text runs to end of payload
 // Notify       [ms:u16][place:u8][titleLen:u8][title][body]
-//                place 0 bottom strip, 1 top strip, 2 centred card.
+//                place: low bits 0 bottom strip, 1 top strip, 2 centred card;
+//                bit 0x80 = solo, i.e. blank the face behind it.
 //                titleLen may be 0; body runs to the end of the payload.
 //                ms == 0 clears any notification early. Like Banner, the
 //                expiry is the DEVICE's — a host that dies mid-notice

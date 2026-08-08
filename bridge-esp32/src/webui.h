@@ -182,13 +182,15 @@ footer a:hover{text-decoration:underline}
       </select></label>
     <label class="mini">for
       <input type="number" id="nms" value="8" min="1" max="60" step="1">s</label>
+    <label class="mini"><input type="checkbox" id="nsolo">blank behind</label>
     <span class="sp"></span>
     <button id="b-nclear">Clear</button>
   </div>
   <p class="hint">Overlaid on whatever is showing, and it expires on the
     <em>device</em> — a bridge that dies cannot strand one on screen. A strip is a
     single line and shrinks to fit; the centred card keeps the title on its own
-    line and draws a frame so it reads over a busy face. Also on MQTT at
+    line and draws a frame so it reads over a busy face. <b>Blank behind</b> drops
+    the face entirely for the duration, which is what you want for a card. Also on MQTT at
     <code>notify/set</code>, and in Home Assistant as a notify entity.</p>
 </section>
 
@@ -301,6 +303,7 @@ el("b-send").onclick=function(){
   if(!m&&!t)return;
   post("/api/notify","{\"title\":"+jstr(t)+",\"message\":"+jstr(m)+
     ",\"place\":"+jstr(el("nplace").value)+
+    ",\"solo\":"+(el("nsolo").checked?"true":"false")+
     ",\"ms\":"+(Math.max(1,Math.min(60,+el("nms").value||8))*1000)+"}");
 };
 el("b-nclear").onclick=function(){post("/api/notify","{\"message\":\"\",\"ms\":0}")};

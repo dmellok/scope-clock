@@ -148,11 +148,11 @@ static void sendFrame(proto::Msg id, const uint8_t* p, uint8_t len) {
 
 // Notify [ms:u16][place:u8][titleLen:u8][title][body]
 static void sendNotify(const String& title, const String& body,
-                       uint8_t place, uint16_t ms) {
+                       uint8_t place, bool solo, uint16_t ms) {
   uint8_t p[proto::MAX_PAYLOAD];
   p[0] = (uint8_t)(ms & 0xFF);
   p[1] = (uint8_t)(ms >> 8);
-  p[2] = place;
+  p[2] = (uint8_t)(place | (solo ? 0x80 : 0));   // high bit: blank the face
   // Title is length-prefixed by a single byte, so it cannot be longer than one,
   // and both together cannot exceed the payload. Truncate here rather than let
   // the device decide — it has the smaller buffers.
@@ -194,24 +194,28 @@ static String jsonField(const String& src, const char* key) {
 // Accepts either the JSON that HA sends or a bare line of text, so the topic is
 // useful from a shell as well as from a notify service.
 static void applyNotify(const String& msg, uint16_t defaultMs) {
-  String title, body, where;
+  String title, body, where, soloStr;
   long ms = defaultMs;
   if (msg.startsWith("{")) {
     title = jsonField(msg, "title");
     body  = jsonField(msg, "message");
     if (!body.length()) body = jsonField(msg, "body");
     where = jsonField(msg, "place");
+    soloStr = jsonField(msg, "solo");
     const String m = jsonField(msg, "ms");
     if (m.length()) ms = m.toInt();
   } else {
     body = msg;
   }
+  // jsonField returns "" for a bare true/false, so look for the literal too.
+  const bool solo = soloStr.startsWith("t") || soloStr == "1"
+                 || msg.indexOf("\"solo\":true") >= 0;
   uint8_t place = 0;
   if (where.equalsIgnoreCase("top")) place = 1;
   else if (where.startsWith("cent") || where.startsWith("Cent")) place = 2;
   if (ms < 0) ms = 0;
   if (ms > 60000) ms = 60000;
-  sendNotify(title, body, place, (uint16_t)ms);
+  sendNotify(title, body, place, solo, (uint16_t)ms);
 }
 
 [[maybe_unused]] static void sendSetMode(uint8_t mode, uint8_t faceId = 0) {
@@ -375,6 +379,7 @@ static const FaceEntry kFaces[] = {
   {"rose","Curves"}, {"lorenz","Curves"}, {"starpoly","Curves"},
   {"starfield","Motion"}, {"tunnel","Motion"},
   {"midiscope","MIDI"}, {"midichord","MIDI"},
+  {"matrix","Effects"},
 };
 // Everything downstream still wants a plain name by index.
 static const char* faceName(uint8_t i) { return kFaces[i].name; }
@@ -530,6 +535,7 @@ static void publishDiscovery() {
       + "\"cmd_tpl\":\"{\\\"title\\\":\\\"{{ title|default('') }}\\\","
       + "\\\"message\\\":\\\"{{ message }}\\\","
       + "\\\"place\\\":\\\"{{ data.place|default('bottom') }}\\\","
+      + "\\\"solo\\\":{{ data.solo|default(false)|lower }},"
       + "\\\"ms\\\":{{ data.ms|default(8000) }}}\","
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
   mqtt.publish((String("homeassistant/notify/") + cfg.mqttPrefix + "/notify/config").c_str(), j.c_str(), true);

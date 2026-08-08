@@ -34,6 +34,7 @@ void applyBanner(DeviceState& dev, const uint8_t* p, uint8_t len) {
 
   dev.noteTitle[0] = '\0';
   dev.notePlace = 0;
+  dev.noteSolo = false;        // a plain banner never blanks the face
   copyField(dev.noteBody, sizeof dev.noteBody, p + 3, (uint8_t)(len - 3));
 
   // Deliberately millis()-relative and owned by the device: if the host stops
@@ -48,13 +49,17 @@ void applyNotify(DeviceState& dev, const uint8_t* p, uint8_t len) {
   const uint16_t ms = (uint16_t)(p[0] | (p[1] << 8));
   if (ms == 0) { dev.noteActive = false; return; }
 
-  const uint8_t place = p[2] > 2 ? 0 : p[2];
+  // The high bit is the solo flag; the placement is what is left.
+  const bool solo = (p[2] & 0x80) != 0;
+  const uint8_t raw = (uint8_t)(p[2] & 0x7F);
+  const uint8_t place = raw > 2 ? 0 : raw;
   uint8_t tlen = p[3];
   // A titleLen that overruns the payload is the one hostile input here; clamp
   // it rather than reading past the frame.
   if ((uint16_t)tlen + 4 > len) tlen = (uint8_t)(len - 4);
 
   dev.notePlace = place;
+  dev.noteSolo = solo;
   copyField(dev.noteTitle, sizeof dev.noteTitle, p + 4, tlen);
   copyField(dev.noteBody,  sizeof dev.noteBody,  p + 4 + tlen,
             (uint8_t)(len - 4 - tlen));

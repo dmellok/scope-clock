@@ -29,6 +29,8 @@ RenderFn kFaces[] = {
   starfield, tunnel,
   // live — driven by whatever is plugged into the front USB jack
   midiscope, midichord,
+  // effects
+  matrix,
 };
 
 // Contiguous runs of kFaces above. Keep the two in step.
@@ -40,6 +42,7 @@ const Family kFamilies[] = {
   { 16, 6 },   // curves:  Lissajous, harmonograph, spirograph, rose, Lorenz, {n/k}
   { 22, 2 },   // motion:  starfield, tunnel
   { 24, 2 },   // live:    MIDI scope figure, MIDI chord wheel
+  { 26, 1 },   // effects: digital rain
 };
 constexpr uint8_t kFamilyCount = sizeof(kFamilies) / sizeof(kFamilies[0]);
 

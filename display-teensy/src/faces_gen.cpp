@@ -222,4 +222,64 @@ void tunnel(const ClockState&, DrawList& d) {
   }
 }
 
+// Digital rain. The one effect everybody asks a green phosphor tube for, and it
+// suits this one: no colour is needed because the depth cue that matters on a
+// CRT is redraw count, so the leading glyph is simply drawn twice and burns
+// brighter than its tail exactly as it should.
+//
+// Cost is the constraint. kLineStride is 1, so a dot lands on every unit of beam
+// travel and a glyph costs roughly its own perimeter — a few hundred dots. Nine
+// columns of six is about as much rain as the frame budget will carry; the sim
+// is what settled those two numbers.
+void matrix(const ClockState&, DrawList& d) {
+  constexpr int COLS = 12, TRAIL = 7, SCALE = 6;
+  constexpr int CELL = SCALE * 20 + 26;      // glyph height plus a little air
+  // TOP bounds the BASELINE, and ink runs upward from there by the cell height,
+  // so the limit is the edge less one glyph — at 1150 the tops of the highest
+  // characters were being clipped off at 1270. The edge in question is the
+  // ±1200 working one a FACE must respect, not the ±1250 an overlay may use.
+  constexpr int TOP = 1200 - SCALE * 20 - 8, BOT = -1195;
+  // Katakana is what the film used and this font has none, so: digits and the
+  // angular half of the alphabet, which keeps the texture busy and legible.
+  static const char kGlyphs[] = "0123456789ABCDEFHJKLMNPRSTVWXYZ*+=<>/\\|";
+  constexpr int NG = (int)(sizeof(kGlyphs) - 1);
+
+  static int16_t headY[COLS], speed[COLS];
+  static char    cell[COLS][TRAIL][2];
+  static bool    seeded = false;
+
+  auto respawn = [&](int c, bool stagger) {
+    // Staggered on the first frame only, so the rain does not start as one
+    // horizontal rank marching down the screen together.
+    headY[c] = (int16_t)(TOP + (stagger ? (int)(xr() % 2600) : (int)(xr() % 600)));
+    speed[c] = (int16_t)(9 + (int)(xr() % 22));
+    for (int r = 0; r < TRAIL; ++r) {
+      cell[c][r][0] = kGlyphs[xr() % NG];
+      cell[c][r][1] = '\0';
+    }
+  };
+  if (!seeded) { for (int c = 0; c < COLS; ++c) respawn(c, true); seeded = true; }
+
+  for (int c = 0; c < COLS; ++c) {
+    headY[c] = (int16_t)(headY[c] - speed[c]);
+    // Gone once the whole trail has cleared the bottom edge.
+    if (headY[c] + TRAIL * CELL < BOT) { respawn(c, false); continue; }
+
+    // One glyph somewhere in the column flickers to something else each frame.
+    // That shimmer is most of what sells the effect, and it costs nothing.
+    if ((xr() & 3) == 0) {
+      const int r = (int)(xr() % TRAIL);
+      cell[c][r][0] = kGlyphs[xr() % NG];
+    }
+
+    const int x = -1080 + c * (2160 / (COLS - 1));
+    for (int r = 0; r < TRAIL; ++r) {
+      const int y = headY[c] + r * CELL;      // r 0 is the head, at the bottom
+      if (y < BOT || y > TOP) continue;
+      d.text(x, y, SCALE, cell[c][r]);
+      if (r == 0) d.text(x, y, SCALE, cell[c][r]);   // the head burns brighter
+    }
+  }
+}
+
 }}  // namespace faces::impl

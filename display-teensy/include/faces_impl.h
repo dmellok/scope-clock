@@ -45,6 +45,9 @@ void starpoly(const ClockState&, DrawList&);   // {n/k} star polygons
 void starfield(const ClockState&, DrawList&);
 void tunnel(const ClockState&, DrawList&);
 
+// --- effects ----------------------------------------------------------------
+void matrix(const ClockState&, DrawList&);     // digital rain
+
 // --- MIDI (faces_midi.cpp) --------------------------------------------------
 void midiscope(const ClockState&, DrawList&);  // the interval as an X-Y figure
 void midichord(const ClockState&, DrawList&);  // the chord as a shape on a wheel

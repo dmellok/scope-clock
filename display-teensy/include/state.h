@@ -45,6 +45,7 @@ struct DeviceState {
   bool      noteActive = false;
   uint32_t  noteUntilMs = 0;
   uint8_t   notePlace = 0;          // 0 bottom strip, 1 top strip, 2 centred card
+  bool      noteSolo = false;       // blank the face behind it
   char      noteTitle[32] = {0};
   char      noteBody[64] = {0};
 };

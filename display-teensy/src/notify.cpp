@@ -68,6 +68,11 @@ void overlayNotify(DeviceState& dev, DrawList& list) {
   // Wrap-safe comparison; the expiry is the device's own.
   if ((int32_t)(millis() - dev.noteUntilMs) >= 0) { dev.noteActive = false; return; }
 
+  // Solo: throw the composed frame away and show only the notice. Done here
+  // rather than in main.cpp so the expiry above is the single place that
+  // decides whether a notification is live — two places would drift.
+  if (dev.noteSolo) list.clear();
+
   const bool hasTitle = dev.noteTitle[0] != '\0';
   const bool hasBody  = dev.noteBody[0]  != '\0';
   if (!hasTitle && !hasBody) return;

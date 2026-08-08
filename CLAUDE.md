@@ -36,8 +36,8 @@ Physical (zero-hardware-mod route the owner chose):
 
 **P0–P4 are done and running on hardware.** The render engine, the NTP-
 disciplined RTC over a USB-host link, and the generic draw-list path all work.
-**26 faces** — dials, digital, the five Platonic solids, a tesseract, generative
-curves, and two driven live by USB-MIDI — plus `PushList` / `Banner` / `SetMode` /
+**27 faces** — dials, digital, the five Platonic solids, a tesseract, generative
+curves, digital rain, and two driven live by USB-MIDI — plus `PushList` / `Banner` / `SetMode` /
 `SetBrightness` / `SetHz` from the host, MQTT + Home Assistant discovery on the
 bridge, host-uploadable face templates, and a web config page.
 
@@ -107,6 +107,9 @@ clone it alongside.
   is handled in the USB ISR, which keeps running when the main loop does not).
   Worth knowing against the OTA-rejection reasoning below: a *hang* is not the
   same as a failed FlasherX leaving no valid application.
+- **A face must stay inside ±1200; an overlay may use ±1250.** `faces6` enforces
+  the former, which is why the matrix rain's TOP is the edge less one glyph
+  height — the bound is on the text BASELINE and ink runs upward from it.
 - **A strip fits ONE line; only the centred card fits two.** The clear air
   between the numeral ring (ink to ~1100) and the edge of the field is about
   150 units, and one line at scale 7 is 140. Stacking a title above a body in a
