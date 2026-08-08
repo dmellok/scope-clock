@@ -54,7 +54,8 @@ void helix(const ClockState&, DrawList&);      // twin helix and rungs
 
 // --- effects ----------------------------------------------------------------
 void matrix(const ClockState&, DrawList&);     // digital rain
-void atom(const ClockState&, DrawList&);       // Bohr model, elements 1-20
+void atom(const ClockState&, DrawList&);       // Bohr model, all 118
+void setAtomZ(uint8_t z);                      // 0 = cycle
 
 // --- host-fed (faces_now.cpp) -----------------------------------------------
 void nowplaying(const ClockState&, DrawList&); // track + progress ring

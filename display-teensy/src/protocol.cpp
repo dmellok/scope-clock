@@ -8,6 +8,7 @@
 #include "nowplaying.h"
 #include "gauges.h"
 #include "vector.h"
+#include "faces_impl.h"
 #include <Arduino.h>
 
 namespace {
@@ -171,6 +172,10 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
 
     case proto::Msg::SetNowPlaying:
       np::set(payload, len);
+      break;
+
+    case proto::Msg::SetElement:
+      if (len >= 1) faces::impl::setAtomZ(payload[0]);
       break;
 
     case proto::Msg::SetWobble:

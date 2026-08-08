@@ -9,6 +9,7 @@
 #include "drawlist.h"
 #include "vector.h"
 #include "text.h"
+#include "elements.h"
 #include <stdio.h>
 #include <math.h>
 
@@ -329,50 +330,82 @@ void matrix(const ClockState&, DrawList& d) {
   }
 }
 
-// A Bohr atom, with the real electron configuration rather than the three
-// crossed ellipses of the logo. Elements 1 to 20 exactly: every one of them has
-// four shells or fewer and eight electrons or fewer in each, so the whole set
-// can be drawn honestly. Past calcium the third shell starts filling to
-// eighteen, which is more dots than a frame will carry and would have to be
-// faked — so it stops where the truth stops being drawable.
-void atom(const ClockState&, DrawList& d) {
-  struct El { const char* sym; uint8_t z; uint8_t shell[4]; };
-  static const El kEl[] = {
-    {"H",1,{1,0,0,0}},   {"He",2,{2,0,0,0}},  {"Li",3,{2,1,0,0}},
-    {"Be",4,{2,2,0,0}},  {"B",5,{2,3,0,0}},   {"C",6,{2,4,0,0}},
-    {"N",7,{2,5,0,0}},   {"O",8,{2,6,0,0}},   {"F",9,{2,7,0,0}},
-    {"Ne",10,{2,8,0,0}}, {"Na",11,{2,8,1,0}}, {"Mg",12,{2,8,2,0}},
-    {"Al",13,{2,8,3,0}}, {"Si",14,{2,8,4,0}}, {"P",15,{2,8,5,0}},
-    {"S",16,{2,8,6,0}},  {"Cl",17,{2,8,7,0}}, {"Ar",18,{2,8,8,0}},
-    {"K",19,{2,8,8,1}},  {"Ca",20,{2,8,8,2}},
-  };
-  constexpr int kN = (int)(sizeof(kEl) / sizeof(kEl[0]));
-  constexpr int kHold = 420;          // ~7s an element at 60Hz
+// A Bohr atom for any of the 118 elements.
+//
+// Heavy elements are the whole problem: oganesson has seven shells and 32
+// electrons in two of them, which is 118 dots and far more beam than a frame
+// carries. So a shell draws at most eight electrons, and the exact occupancy is
+// printed along the top as digits — the diagram stays readable and the truth is
+// still on the screen, rather than being quietly rounded off.
+// Widest a line may be at a given baseline, on a round face: the chord at
+// whichever of its two edges is further from the centre.
+int chordWidth(int y, int h, int desc) {
+  constexpr int32_t R = 1195;                     // device units; 1800 counts
+  // Ink runs from one DESCENDER below the baseline to the cell height above it.
+  // Not accounting for the descender put Mg, Ag, Hg, Rg, Np and Dy past the rim
+  // while every symbol without a tail sat comfortably inside — the g was doing
+  // it, not the layout.
+  const int32_t lo = y - desc, hi = y + h;
+  const int32_t a = lo < 0 ? -lo : lo, b = hi < 0 ? -hi : hi;
+  const int32_t far = a > b ? a : b;
+  if (far >= R) return 0;
+  return 2 * (int)sqrtf((float)(R * R - far * far));
+}
 
+// Centred, shrunk until it fits that chord. Ink width is linear in scale below
+// 40, so the fitting scale is a division rather than a search.
+void centredFit(DrawList& d, const char* s, int y, int want) {
+  if (!s || !s[0]) return;
+  const int unit = txt::inkWidth(1, s);
+  // Six units of descender per unit of scale, which is how far this font's g
+  // and p reach below the baseline.
+  const int room = chordWidth(y, want * 20, want * 6);
+  int sc = want;
+  if (unit > 0 && unit * sc > room) sc = room / unit;
+  if (sc < 4) sc = 4;
+  d.text(-txt::inkWidth(sc, s) / 2, y, sc, s);
+}
+
+uint8_t atomZ = 0;        // 0 = cycle through them all
+
+void setAtomZ(uint8_t z) { atomZ = z > elem::kCount ? 0 : z; }
+
+void atom(const ClockState&, DrawList& d) {
+  constexpr int kHold = 420;              // ~7s an element when cycling
   static uint16_t t = 0;
   ++t;
-  const El& e = kEl[(t / kHold) % kN];
+  const int z = atomZ ? atomZ : (int)((t / kHold) % elem::kCount) + 1;
+  const elem::Element& e = elem::kTable[z - 1];
 
-  // Shell radii and the tilt of each orbit. Squashing y and tilting each shell
-  // differently is what reads as three dimensions on a display with no depth.
-  static const int16_t kRad[4]  = { 380, 610, 850, 1090 };
-  static const int16_t kTilt[4] = { 0, 128, 256, 384 };     // in table steps
-  constexpr int kSquash = 38;         // percent of the x radius
+  int shells = 0;
+  for (int i = 0; i < 7; ++i) if (e.shell[i]) shells = i + 1;
+  if (!shells) return;
 
-  d.circle(0, 0, 70);                 // the nucleus
-  d.circle(0, 0, 70);                 // twice: it should read solid
+  // Rings spread between these radii whatever the shell count, so hydrogen is
+  // not a dot and oganesson is not a smudge.
+  constexpr int32_t kInner = 330, kOuter = 1080;
+  constexpr int kSquash = 38;             // y radius, percent of x
+  // Fewer segments per ring when there are more rings: seven full ellipses at
+  // twenty segments is 140 items before a single electron is drawn.
+  // Hardware, not the sim, set these: oganesson at 11 segments and 8 electrons a
+  // shell reported 102-109% of the frame budget on the tube while the sim's
+  // dot-only estimate said 86%. Items cost about 20us each on top of their dots.
+  const int seg  = shells >= 6 ? 8 : (shells >= 4 ? 13 : 20);
+  const int maxE = shells >= 6 ? 5 : (shells >= 4 ? 6 : 8);
 
-  for (int sh = 0; sh < 4; ++sh) {
-    const int n = e.shell[sh];
-    if (!n) continue;
-    const int32_t R = kRad[sh], ry = R * kSquash / 100;
-    const int32_t ct = vec::cosT(kTilt[sh]), st = vec::sinT(kTilt[sh]);
+  d.circle(0, 0, 70);
+  d.circle(0, 0, 70);                     // twice: the nucleus should read solid
 
-    // The orbit, as a tilted ellipse.
-    constexpr int kSeg = 20;
+  for (int sh = 0; sh < shells; ++sh) {
+    const int32_t R = shells == 1 ? (kInner + kOuter) / 2
+                                  : kInner + (kOuter - kInner) * sh / (shells - 1);
+    const int32_t ry = R * kSquash / 100;
+    const int tilt = sh * 137;             // no two shells share an angle
+    const int32_t ct = vec::cosT(tilt), st = vec::sinT(tilt);
+
     int lx = 0, ly = 0;
-    for (int i = 0; i <= kSeg; ++i) {
-      const int u = (i % kSeg) * vec::kSteps / kSeg;
+    for (int i = 0; i <= seg; ++i) {
+      const int u = (i % seg) * vec::kSteps / seg;
       const int32_t ex = (R * vec::cosT(u)) >> 16, ey = (ry * vec::sinT(u)) >> 16;
       const int x = (int)((ex * ct - ey * st) >> 16);
       const int y = (int)((ex * st + ey * ct) >> 16);
@@ -380,30 +413,35 @@ void atom(const ClockState&, DrawList& d) {
       lx = x; ly = y;
     }
 
-    // Electrons, evenly spaced and marching round. Outer shells run slower,
-    // which is both what the model says and what stops the whole thing looking
-    // like one rigid object being spun.
-    const int adv = (int)(t * (5 - sh) * 3);
-    for (int k = 0; k < n; ++k) {
-      const int u = k * vec::kSteps / n + adv;
+    // At most eight drawn, spaced around the whole ring so a full shell still
+    // looks full. Outer shells march slower, as the model says they should.
+    const int n = e.shell[sh];
+    const int show = n > maxE ? maxE : n;
+    const int adv = (int)(t * (8 - sh) * 2);
+    for (int k = 0; k < show; ++k) {
+      const int u = k * vec::kSteps / show + adv;
       const int32_t ex = (R * vec::cosT(u)) >> 16, ey = (ry * vec::sinT(u)) >> 16;
       const int x = (int)((ex * ct - ey * st) >> 16);
       const int y = (int)((ex * st + ey * ct) >> 16);
-      d.circle(x, y, 42);
+      d.circle(x, y, 34);
     }
   }
 
-  // Labels clear of the orbits rather than over them. Centred, the symbol
-  // tangled with the inner shells at every element — there is no room inside a
-  // 380-unit orbit for text big enough to read, so it goes below the atom and
-  // the atomic number above it, where nothing else is ever drawn.
-  static char num[6];
-  snprintf(num, sizeof num, "%u", (unsigned)e.z);
-  d.text(-txt::inkWidth(13, e.sym) / 2, -1160, 13, e.sym);
-  // 1030, not 1150: the baseline plus the cell height must stay under 1200
-  // device units, because the render multiplies by 3/2 to reach the 1800-count
-  // rim. At 1150 the digits drew 135 counts past the glass.
-  d.text(-txt::inkWidth(7, num) / 2, 1030, 7, num);
+  // Atomic number and the exact configuration above, symbol below.
+  //
+  // On a ROUND screen a line's width limit is the chord at its height, not the
+  // full diameter: "115 2-8-18-32-32-18-5" fits the field easily and still puts
+  // its corners 440 counts past the glass at y=1040. So each line is fitted to
+  // the chord it actually sits on.
+  static char num[8], cfg[40], sym[8];
+  snprintf(num, sizeof num, "%d", z);
+  int at = 0;
+  for (int i = 0; i < shells && at < (int)sizeof(cfg) - 4; ++i)
+    at += snprintf(cfg + at, sizeof(cfg) - at, "%s%u", i ? "-" : "", (unsigned)e.shell[i]);
+  snprintf(sym, sizeof sym, "%s", e.sym);
+  centredFit(d, num, 1040, 7);
+  centredFit(d, cfg,  860, 6);
+  centredFit(d, sym, -1120, 13);
 }
 
 }}  // namespace faces::impl

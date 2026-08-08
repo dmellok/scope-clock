@@ -151,6 +151,8 @@ footer a:hover{text-decoration:underline}
   <div id="faces" class="fam"></div>
   <div class="row" style="margin-top:12px">
     <label class="mini"><input type="checkbox" id="autonp">show now-playing when music starts</label>
+    <span class="sp"></span>
+    <label class="mini">element<select id="elem"></select></label>
   </div>
   <div class="row" style="margin-top:10px">
     <label class="mini" style="flex:1;gap:9px">size
@@ -712,6 +714,16 @@ document.addEventListener("keydown",function(e){
 });
 reparse();
 el("b-relink").onclick=function(){post("/api/relink","1")};
+// Symbols for the picker only — the shell data that actually gets drawn lives on
+// the Teensy. Chemistry does not drift, so a second copy of 118 symbols is not
+// the hazard a second copy of the face list turned out to be.
+var SYMS=("H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn "+
+"Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd "+
+"Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th "+
+"Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og").split(" ");
+el("elem").innerHTML='<option value="0">cycle</option>'+SYMS.map(function(sy,i){
+  return '<option value="'+(i+1)+'">'+(i+1)+' '+sy+'</option>'}).join("");
+el("elem").onchange=function(){post("/api/element",this.value)};
 el("autonp").onchange=function(){post("/api/autonp",this.checked?"1":"0")};
 el("wobble").onchange=function(){post("/api/wobble",this.checked?"1":"0")};
 el("fscale").oninput=function(){el("fscaleval").textContent=this.value+"%"};
@@ -738,6 +750,7 @@ function poll(){
     // device is the authority — this just follows it.
     if(s.autonp!==undefined)el("autonp").checked=!!s.autonp;
     if(s.wobble!==undefined)el("wobble").checked=!!s.wobble;
+    if(s.elem!==undefined&&document.activeElement!==el("elem"))el("elem").value=s.elem;
     if(document.activeElement!==el("fscale")&&s.scale!==undefined){
       el("fscale").value=s.scale; el("fscaleval").textContent=s.scale+"%"}
     el("s-mode").textContent=mn;

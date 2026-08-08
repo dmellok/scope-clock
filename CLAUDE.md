@@ -113,6 +113,16 @@ clone it alongside.
   Same shape as the RTC: the host supplies truth, the device keeps time against
   it. `gauges` is deliberately generic — n labelled percentages and a footer,
   nothing about where they came from — so any topic can drive it.
+- **The sim's dot count is NOT the whole frame cost.** Every item also pays
+  settling, glow and the blanked jump to its start — about 20us each. Ignoring
+  that made oganesson look like 86% of budget when the tube reported 102-109%.
+  `faces6` and `atomz` now add `items * 0.020ms`, which reproduces the hardware
+  to within a few percent. Trust it over the raw dot count.
+- **Text on a round face is limited by the CHORD at its height, not the width.**
+  A configuration string fits the field easily and still puts its corners past
+  the glass near the top. And ink runs from one descender BELOW the baseline to
+  the cell height above it — Mg, Ag, Hg, Rg, Np and Dy all have tails, and
+  ignoring them clipped exactly those symbols and no others.
 - **Anti-burn-in is a continuous drift now, not an hourly jump.** `vec::tickWobble`
   walks the whole image round a 45-count circle every four minutes, called from
   the loop in EVERY mode — burn does not care which mode put the image there.

@@ -514,6 +514,12 @@ static uint8_t npFace() {
 // deliberate face choice as an override that holds until the music stops.
 static bool autoNowPlaying = true;    // master switch, persisted
 static bool wobbleOn = true;          // anti-burn-in drift, persisted
+static uint8_t atomZ = 0;             // atom face: 0 cycles, 1..118 pins
+
+static void sendElement() {
+  const uint8_t p[1] = { atomZ };
+  sendFrame(proto::Msg::SetElement, p, 1);
+}
 
 static void sendWobble() {
   const uint8_t p[1] = { (uint8_t)(wobbleOn ? 1 : 0) };
@@ -659,6 +665,14 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
     sendGauges(pct, labels, 3, footer);
   } else if (tp == topic("notify/set")) {
     applyNotify(msg, bannerMs);
+  } else if (tp == topic("element/set")) {
+    // 0, "cycle" or anything unparseable means walk the table.
+    const long v = msg.equalsIgnoreCase("cycle") ? 0 : msg.toInt();
+    atomZ = (uint8_t)(v >= 1 && v <= 118 ? v : 0);
+    prefs.begin("scopeclock", false); prefs.putUChar("atomz", atomZ); prefs.end();
+    sendElement();
+    mqtt.publish(topic("element/state").c_str(),
+                 atomZ ? String(atomZ).c_str() : "0", true);
   } else if (tp == topic("wobble/set")) {
     wobbleOn = !(msg.equalsIgnoreCase("off") || msg == "0" || msg.equalsIgnoreCase("false"));
     prefs.begin("scopeclock", false); prefs.putUChar("wobble", wobbleOn ? 1 : 0); prefs.end();
@@ -729,6 +743,12 @@ static void publishDiscovery() {
       + "\"options\":[" + opts + "],"
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
   mqtt.publish((String("homeassistant/select/") + cfg.mqttPrefix + "/face/config").c_str(), j.c_str(), true);
+
+  j = String("{\"name\":\"Element\",\"uniq_id\":\"" MQTT_PREFIX "_elem\",")
+      + "\"cmd_t\":\"" + topic("element/set") + "\",\"stat_t\":\"" + topic("element/state") + "\","
+      + "\"min\":0,\"max\":118,\"step\":1,\"mode\":\"box\",\"ic\":\"mdi:atom\","
+      + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+  mqtt.publish((String("homeassistant/number/") + cfg.mqttPrefix + "/element/config").c_str(), j.c_str(), true);
 
   j = String("{\"name\":\"Anti burn-in drift\",\"uniq_id\":\"" MQTT_PREFIX "_wobble\",")
       + "\"cmd_t\":\"" + topic("wobble/set") + "\",\"stat_t\":\"" + topic("wobble/state") + "\","
@@ -823,6 +843,7 @@ static void mqttConnect() {
   statusFresh = true;                 // republish everything on this connection
   if (cfg.npTopic.length())    mqtt.subscribe(cfg.npTopic.c_str());
   if (cfg.gaugeTopic.length()) mqtt.subscribe(cfg.gaugeTopic.c_str());
+  mqtt.subscribe(topic("element/set").c_str());
   mqtt.subscribe(topic("wobble/set").c_str());
   mqtt.subscribe(topic("notify/set").c_str());
   mqtt.subscribe(topic("banner/set").c_str());
@@ -944,6 +965,7 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
       // what was actually chosen before anyone sees otherwise.
       sendScales();
       sendWobble();
+      sendElement();
       break;
     case proto::Msg::Status: {
       if (len < sizeof(proto::StatusPayload)) break;
@@ -1007,6 +1029,7 @@ static void handleState() {
   j += "\"scale\":" + String(curFace < 32 ? faceScale[curFace] : kDefaultScale) + ",";
   j += "\"autonp\":" + String(autoNowPlaying ? 1 : 0) + ",";
   j += "\"wobble\":" + String(wobbleOn ? 1 : 0) + ",";
+  j += "\"elem\":" + String(atomZ) + ",";
   j += "\"frame\":" + String(haveStatus ? s.frameUs : 0) + ",";
   j += "\"hz\":"    + String(haveStatus ? s.hz : 0) + ",";
   j += "\"rtc\":"   + String(haveStatus && s.rtcOk ? 1 : 0) + ",";
@@ -1055,6 +1078,13 @@ static void handleApi() {
     curBrightness = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
     const uint8_t p[1] = { curBrightness };
     sendFrame(proto::Msg::SetBrightness, p, 1);
+  } else if (uri.endsWith("/element")) {
+    const long v = body.equalsIgnoreCase("cycle") ? 0 : body.toInt();
+    atomZ = (uint8_t)(v >= 1 && v <= 118 ? v : 0);
+    prefs.begin("scopeclock", false); prefs.putUChar("atomz", atomZ); prefs.end();
+    sendElement();
+    mqtt.publish(topic("element/state").c_str(),
+                 atomZ ? String(atomZ).c_str() : "0", true);
   } else if (uri.endsWith("/wobble")) {
     wobbleOn = !(body == "0" || body.equalsIgnoreCase("off"));
     prefs.begin("scopeclock", false); prefs.putUChar("wobble", wobbleOn ? 1 : 0); prefs.end();
@@ -1219,6 +1249,8 @@ void setup() {
   prefs.begin("scopeclock", true);
   autoNowPlaying = prefs.getUChar("autonp", 1) != 0;
   wobbleOn       = prefs.getUChar("wobble", 1) != 0;
+  atomZ          = prefs.getUChar("atomz", 0);
+  if (atomZ > 118) atomZ = 0;
   prefs.end();
 
   WiFi.mode(WIFI_STA);
@@ -1278,6 +1310,7 @@ void loop() {
     web.on("/api/faces", HTTP_GET, handleFaces);
     web.on("/api/face", HTTP_POST, handleApi);
     web.on("/api/brightness", HTTP_POST, handleApi);
+    web.on("/api/element", HTTP_POST, handleApi);
     web.on("/api/wobble", HTTP_POST, handleApi);
     web.on("/api/autonp", HTTP_POST, handleApi);
     web.on("/api/scale", HTTP_POST, handleApi);
