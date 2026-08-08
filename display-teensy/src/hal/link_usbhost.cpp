@@ -22,6 +22,7 @@
 #include "hal/link.h"
 #include "protocol.h"     // shared/
 #include "state.h"
+#include "hal/dac.h"
 #include <Arduino.h>
 #include <USBHost_t36.h>
 
@@ -137,6 +138,32 @@ void poll(DeviceState& dev, ClockState& clk) {
     everHeard = false;
   }
   if (!isUp) everHeard = false;
+
+  // Restart if the port disappears after having worked.
+  //
+  // USBHost_t36 does not re-claim a device that goes away: proven on hardware,
+  // where after the bridge resets its USB peripheral the link only comes back
+  // when this MCU restarts. That is also why a power cycle was the only known
+  // cure — it is the one case where this side enumerates from a cold boot
+  // rather than trying to re-enumerate.
+  //
+  // Cheap here: the RTC keeps the time and dac::init() blanks the beam before
+  // anything is drawn, so a restart costs a blink.
+  //
+  // Retries rather than trying once: observed on hardware, the first attempt
+  // can land before the far side has finished re-initialising, and the second
+  // succeeds. It cannot become a reset loop on an absent bridge, because
+  // everBeenUp is false after a restart if the port never comes up — so a
+  // bridge that is simply unplugged costs exactly one restart, not a cycle.
+  static bool     everBeenUp = false;
+  static uint32_t downSince  = 0;
+  if (isUp) { everBeenUp = true; downSince = 0; }
+  else if (everBeenUp && !downSince) downSince = now;
+  if (downSince && (now - downSince) > 25000 && now > 45000) {
+    hal::dac::blank(true);          // never leave the beam parked and lit
+    SCB_AIRCR = 0x05FA0004;         // system reset
+  }
+
   wasUp = isUp;
 
   // Keep announcing until the bridge actually answers, not just once on

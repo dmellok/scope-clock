@@ -11,6 +11,7 @@
 #include "protocol.h"     // shared/
 #include "webui.h"
 #include "soc/usb_serial_jtag_struct.h"
+#include "soc/system_reg.h"
 
 // ---- config ----
 // Supplied at build time from .env by load_env.py (see .env.example). That file
@@ -493,15 +494,54 @@ static void mqttConnect() {
   mqtt.subscribe(topic("scene/set").c_str());
 }
 
-// The device reports how long it has been deaf; we are still hearing it, so
-// the report arrives even when nothing we send does. Recorded and surfaced,
-// but NOT acted on automatically — see the note in the web UI. Dropping the
-// D+ pull-up does detach the device, but it does not re-enumerate cleanly
-// afterwards, and it takes the working uplink down with it. Only a power cycle
-// is known to clear this.
-static uint16_t lastSilent = 0;
+// Reset the USB Serial/JTAG peripheral itself.
+//
+// This is the third thing tried against the one-way wedge, and the only one
+// that touches the part the evidence actually implicates. The others reset
+// everything around it and failed: USBHost::begin() on the device already
+// asserts USBHS_USBCMD_RST and re-inits the PHY, so a Teensy reboot is a full
+// host-controller reset and did not clear it; an ESP32 soft reset leaves the
+// peripheral's state untouched; and dropping the D+ pull-up only changes what
+// is on the wire, which detached the device but never re-enumerated and took
+// the working uplink down with it.
+//
+// Asserting SYSTEM_USB_DEVICE_RST returns the block's registers and state
+// machine to reset — which is what removing power does to it, and power is the
+// one thing known to work. The driver is torn down first and rebuilt after,
+// because begin() is what reconfigures the PHY and re-raises the pull-up.
+static uint32_t lastResetMs = 0;
 
-static void checkLink(uint16_t silentS) { lastSilent = silentS; }
+static void usbPeripheralReset() {
+  lastResetMs = millis();
+  TO_DISPLAY.end();
+  delay(20);
+  static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+  portENTER_CRITICAL(&mux);                 // shared register, so atomically
+  REG_SET_BIT(SYSTEM_PERIP_RST_EN1_REG, SYSTEM_USB_DEVICE_RST);
+  REG_CLR_BIT(SYSTEM_PERIP_RST_EN1_REG, SYSTEM_USB_DEVICE_RST);
+  portEXIT_CRITICAL(&mux);
+  delay(80);
+  TO_DISPLAY.begin(115200);
+}
+
+// The device reports how long it has been deaf; we are still hearing it, so the
+// report arrives even when nothing we send does. That is the only way to see
+// this fault: from here, our own writes still report success.
+static uint16_t lastSilent = 0;
+static bool     autoRecover = true;    // proven: peripheral reset + device restart
+
+static void checkLink(uint16_t silentS, uint32_t deviceUpS) {
+  lastSilent = silentS;
+  if (!autoRecover) return;
+  // 0xFFFF is "has never heard anything", which after a restart is the WORST
+  // case, not an exempt one — treating it as healthy is why the pair could
+  // restart once and then sit deaf forever, each side waiting on the other.
+  const bool deaf = (silentS == 0xFFFF) ? (deviceUpS > 30) : (silentS >= 30);
+  if (!deaf) return;
+  if (millis() < 30000) return;                    // ignore our own boot churn
+  if (millis() - lastResetMs < 60000) return;      // one attempt a minute
+  usbPeripheralReset();
+}
 
 // Telemetry and input, republished for Home Assistant. Only on change, so a
 // 5s status heartbeat does not become 5s of MQTT traffic.
@@ -566,7 +606,7 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
       proto::StatusPayload s;
       memcpy(&s, p, sizeof s);          // the payload need not be aligned
       lastStatus = s; haveStatus = true;
-      checkLink(s.linkSilentS);
+      checkLink(s.linkSilentS, s.uptimeS);
       publishStatus(s);
       break;
     }
@@ -649,6 +689,8 @@ static void handleApi() {
     sendBanner(body.c_str(), bannerMs);
   } else if (uri.endsWith("/scene")) {
     pushScene(body);
+  } else if (uri.endsWith("/relink")) {
+    usbPeripheralReset();
   }
   web.send(200, "text/plain", "ok");
 }
@@ -818,6 +860,7 @@ void loop() {
     web.on("/api/brightness", HTTP_POST, handleApi);
     web.on("/api/banner", HTTP_POST, handleApi);
     web.on("/api/scene", HTTP_POST, handleApi);
+    web.on("/api/relink", HTTP_POST, handleApi);
     web.on("/config", HTTP_GET, handleRoot);
     web.on("/save", HTTP_POST, handleSave);
     web.on("/forget", HTTP_GET, handleForget);
