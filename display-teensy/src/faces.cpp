@@ -35,6 +35,8 @@ RenderFn kFaces[] = {
   nowplaying, gauges,
   // wireframes
   teapot, sphere, knot, mobius, helix,
+  // science
+  atom,
 };
 
 // Contiguous runs of kFaces above. Keep the two in step.
@@ -49,6 +51,7 @@ const Family kFamilies[] = {
   { 26, 1 },   // effects: digital rain
   { 27, 2 },   // data:    now playing, gauges
   { 29, 5 },   // wire:    teapot, sphere, knot, mobius, helix
+  { 34, 1 },   // science: Bohr atom
 };
 constexpr uint8_t kFamilyCount = sizeof(kFamilies) / sizeof(kFamilies[0]);
 

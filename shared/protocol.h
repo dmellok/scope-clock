@@ -28,6 +28,7 @@ enum class Msg : uint8_t {
   SetScales      = 0x0C,   // per-face render scale, percent, one byte each
   SetNowPlaying  = 0x0D,   // current track, for the nowplaying face
   SetGauges      = 0x0E,   // labelled percentages, for the gauges face
+  SetWobble      = 0x0F,   // anti-burn-in drift on/off
   // device -> host
   Hello          = 0x81,   // fw version, caps, panel size
   Pong           = 0x82,
@@ -112,6 +113,8 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 //                [title][artist][album]   flags bit0 = playing.
 //                Sent when the track CHANGES, not per second: the device
 //                advances the progress ring itself between messages.
+// SetWobble    [on:u8]   continuous slow drift of the whole image, which
+//                supersedes the hourly screensaver nudge while it is on.
 // SetGauges    [n:u8] then n x [pct:u8][labelLen:u8][label], then a footer
 //                string to the end. Nothing in it says where the numbers
 //                came from, so any source can drive it.

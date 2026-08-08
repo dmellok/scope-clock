@@ -75,6 +75,7 @@ void loop() {
   hal::link::poll(dev, clk);     // 1. host commands in (non-blocking)
   hal::input::poll(dev);         // 2. encoder/button out
   hal::midi::poll();             // 2b. USB-MIDI in (bounded drain, front jack)
+  vec::tickWobble();             // 2c. anti-burn-in drift, all modes
 
   // Audio mode hands the DACs to the audio DMA, so the changeover has to happen
   // exactly on the edge — starting it twice re-runs a 257ms ramp, and failing to

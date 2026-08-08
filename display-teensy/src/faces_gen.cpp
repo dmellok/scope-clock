@@ -9,6 +9,7 @@
 #include "drawlist.h"
 #include "vector.h"
 #include "text.h"
+#include <stdio.h>
 #include <math.h>
 
 namespace faces { namespace impl {
@@ -326,6 +327,83 @@ void matrix(const ClockState&, DrawList& d) {
       if (r == 0) d.text(colX[c], y, SCALE, cell[c][r]);   // the head burns brighter
     }
   }
+}
+
+// A Bohr atom, with the real electron configuration rather than the three
+// crossed ellipses of the logo. Elements 1 to 20 exactly: every one of them has
+// four shells or fewer and eight electrons or fewer in each, so the whole set
+// can be drawn honestly. Past calcium the third shell starts filling to
+// eighteen, which is more dots than a frame will carry and would have to be
+// faked — so it stops where the truth stops being drawable.
+void atom(const ClockState&, DrawList& d) {
+  struct El { const char* sym; uint8_t z; uint8_t shell[4]; };
+  static const El kEl[] = {
+    {"H",1,{1,0,0,0}},   {"He",2,{2,0,0,0}},  {"Li",3,{2,1,0,0}},
+    {"Be",4,{2,2,0,0}},  {"B",5,{2,3,0,0}},   {"C",6,{2,4,0,0}},
+    {"N",7,{2,5,0,0}},   {"O",8,{2,6,0,0}},   {"F",9,{2,7,0,0}},
+    {"Ne",10,{2,8,0,0}}, {"Na",11,{2,8,1,0}}, {"Mg",12,{2,8,2,0}},
+    {"Al",13,{2,8,3,0}}, {"Si",14,{2,8,4,0}}, {"P",15,{2,8,5,0}},
+    {"S",16,{2,8,6,0}},  {"Cl",17,{2,8,7,0}}, {"Ar",18,{2,8,8,0}},
+    {"K",19,{2,8,8,1}},  {"Ca",20,{2,8,8,2}},
+  };
+  constexpr int kN = (int)(sizeof(kEl) / sizeof(kEl[0]));
+  constexpr int kHold = 420;          // ~7s an element at 60Hz
+
+  static uint16_t t = 0;
+  ++t;
+  const El& e = kEl[(t / kHold) % kN];
+
+  // Shell radii and the tilt of each orbit. Squashing y and tilting each shell
+  // differently is what reads as three dimensions on a display with no depth.
+  static const int16_t kRad[4]  = { 380, 610, 850, 1090 };
+  static const int16_t kTilt[4] = { 0, 128, 256, 384 };     // in table steps
+  constexpr int kSquash = 38;         // percent of the x radius
+
+  d.circle(0, 0, 70);                 // the nucleus
+  d.circle(0, 0, 70);                 // twice: it should read solid
+
+  for (int sh = 0; sh < 4; ++sh) {
+    const int n = e.shell[sh];
+    if (!n) continue;
+    const int32_t R = kRad[sh], ry = R * kSquash / 100;
+    const int32_t ct = vec::cosT(kTilt[sh]), st = vec::sinT(kTilt[sh]);
+
+    // The orbit, as a tilted ellipse.
+    constexpr int kSeg = 20;
+    int lx = 0, ly = 0;
+    for (int i = 0; i <= kSeg; ++i) {
+      const int u = (i % kSeg) * vec::kSteps / kSeg;
+      const int32_t ex = (R * vec::cosT(u)) >> 16, ey = (ry * vec::sinT(u)) >> 16;
+      const int x = (int)((ex * ct - ey * st) >> 16);
+      const int y = (int)((ex * st + ey * ct) >> 16);
+      if (i) d.line(lx, ly, x, y);
+      lx = x; ly = y;
+    }
+
+    // Electrons, evenly spaced and marching round. Outer shells run slower,
+    // which is both what the model says and what stops the whole thing looking
+    // like one rigid object being spun.
+    const int adv = (int)(t * (5 - sh) * 3);
+    for (int k = 0; k < n; ++k) {
+      const int u = k * vec::kSteps / n + adv;
+      const int32_t ex = (R * vec::cosT(u)) >> 16, ey = (ry * vec::sinT(u)) >> 16;
+      const int x = (int)((ex * ct - ey * st) >> 16);
+      const int y = (int)((ex * st + ey * ct) >> 16);
+      d.circle(x, y, 42);
+    }
+  }
+
+  // Labels clear of the orbits rather than over them. Centred, the symbol
+  // tangled with the inner shells at every element — there is no room inside a
+  // 380-unit orbit for text big enough to read, so it goes below the atom and
+  // the atomic number above it, where nothing else is ever drawn.
+  static char num[6];
+  snprintf(num, sizeof num, "%u", (unsigned)e.z);
+  d.text(-txt::inkWidth(13, e.sym) / 2, -1160, 13, e.sym);
+  // 1030, not 1150: the baseline plus the cell height must stay under 1200
+  // device units, because the render multiplies by 3/2 to reach the 1800-count
+  // rim. At 1150 the digits drew 135 counts past the glass.
+  d.text(-txt::inkWidth(7, num) / 2, 1030, 7, num);
 }
 
 }}  // namespace faces::impl

@@ -113,6 +113,13 @@ clone it alongside.
   Same shape as the RTC: the host supplies truth, the device keeps time against
   it. `gauges` is deliberately generic — n labelled percentages and a footer,
   nothing about where they came from — so any topic can drive it.
+- **Anti-burn-in is a continuous drift now, not an hourly jump.** `vec::tickWobble`
+  walks the whole image round a 45-count circle every four minutes, called from
+  the loop in EVERY mode — burn does not care which mode put the image there.
+  It supersedes `updateScreenSaver`'s hourly raster while on (two things writing
+  saveX/saveY would fight), and saveX/saveY are in DAC counts, added after the
+  3/2 display scale. Switchable from the page, MQTT and a Home Assistant switch;
+  the bridge persists it and re-sends on Hello.
 - **NO leading zeros in coordinate tables.** A tidily column-aligned `-060` is
   octal 48, and `-0960` will not compile at all. Both happened while padding the
   teapot's spout and handle to line up, and only the second was an error the

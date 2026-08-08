@@ -223,7 +223,36 @@ void arc(int cx, int cy, int r) { ellipseArc(cx, cy, r, r, 6, 13); }
 
 // Once an hour, shuffle the whole display around a small triangle raster. It is
 // imperceptible frame to frame but spreads phosphor burn over a 4x15 unit area.
+// Continuous anti-burn-in drift.
+//
+// The hourly raster below jumps the image to one of 31 places once an hour,
+// which spreads burn but leaves the picture in one spot for a full hour at a
+// time. A slow circular wander covers the same ground continuously and is
+// imperceptible frame to frame: 45 DAC counts is 2.5% of the tube's radius, and
+// a lap takes four minutes.
+//
+// saveX/saveY are in DAC counts, not device units — they are added after the
+// display scale, which is what makes 45 mean 45 here.
+bool wobbleOn = true;
+
+void setWobble(bool on) {
+  wobbleOn = on;
+  if (!on) { saveX = 0; saveY = 0; }
+}
+bool wobble() { return wobbleOn; }
+
+void tickWobble() {
+  if (!wobbleOn) return;
+  constexpr int32_t kRadius = 45;
+  constexpr uint32_t kMsPerStep = 234;      // 1024 steps -> ~4 minutes a lap
+  const int a = (int)((millis() / kMsPerStep) & (kSteps - 1));
+  saveX = (int)((kRadius * costab[a]) >> 16);
+  saveY = (int)((kRadius * sintab[a]) >> 16);
+}
+
 void updateScreenSaver(int hour) {
+  // The wobble owns the offset when it is on; two things writing it would fight.
+  if (wobbleOn) return;
   static const int kSavers = 31;
   static int scrX = 8;      // first tick lands on 9, the step nearest (0,0)
   static int lastHour = -1;

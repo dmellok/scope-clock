@@ -50,4 +50,11 @@ void setBrightness(uint8_t b);
 void tuneDwell(uint32_t frameUs, uint32_t budgetUs);
 void updateScreenSaver(int hour);  // nudges the display once an hour, anti-burn-in
 
+// Continuous anti-burn-in drift, which supersedes the hourly nudge when on.
+// tickWobble() must be called every loop, in every mode — burn does not care
+// which mode put the image there.
+void setWobble(bool on);
+bool wobble();
+void tickWobble();
+
 } // namespace vec

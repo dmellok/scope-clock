@@ -7,6 +7,7 @@
 #include "hal/link.h"
 #include "nowplaying.h"
 #include "gauges.h"
+#include "vector.h"
 #include <Arduino.h>
 
 namespace {
@@ -170,6 +171,10 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
 
     case proto::Msg::SetNowPlaying:
       np::set(payload, len);
+      break;
+
+    case proto::Msg::SetWobble:
+      if (len >= 1) vec::setWobble(payload[0] != 0);
       break;
 
     case proto::Msg::SetGauges:

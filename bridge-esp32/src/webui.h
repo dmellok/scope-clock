@@ -175,8 +175,14 @@ footer a:hover{text-decoration:underline}
     <input type="range" id="bri" min="0" max="255" step="5">
     <span id="brival">--</span>
   </div>
+  <div class="row" style="margin-top:12px">
+    <label class="mini"><input type="checkbox" id="wobble">anti burn-in drift</label>
+  </div>
   <p class="hint">Beam dwell per dot. The render adapts to fill the refresh, so
-    every face ends up equally bright.</p>
+    every face ends up equally bright.<br>
+    The drift walks the whole image slowly round a circle 45 counts across — one
+    lap every four minutes, invisible frame to frame but enough to keep any one
+    stroke off the same phosphor. There is a switch for it in Home Assistant too.</p>
 </section>
 
 <section>
@@ -707,6 +713,7 @@ document.addEventListener("keydown",function(e){
 reparse();
 el("b-relink").onclick=function(){post("/api/relink","1")};
 el("autonp").onchange=function(){post("/api/autonp",this.checked?"1":"0")};
+el("wobble").onchange=function(){post("/api/wobble",this.checked?"1":"0")};
 el("fscale").oninput=function(){el("fscaleval").textContent=this.value+"%"};
 el("fscale").onchange=function(){post("/api/scale",this.value)};
 el("bri").oninput=function(){el("brival").textContent=this.value};
@@ -730,6 +737,7 @@ function poll(){
     // Left alone while it is being dragged, and while the knob is mid-adjust the
     // device is the authority — this just follows it.
     if(s.autonp!==undefined)el("autonp").checked=!!s.autonp;
+    if(s.wobble!==undefined)el("wobble").checked=!!s.wobble;
     if(document.activeElement!==el("fscale")&&s.scale!==undefined){
       el("fscale").value=s.scale; el("fscaleval").textContent=s.scale+"%"}
     el("s-mode").textContent=mn;

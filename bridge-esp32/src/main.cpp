@@ -459,6 +459,7 @@ static const FaceEntry kFaces[] = {
   {"nowplaying","Data"}, {"gauges","Data"},
   {"teapot","Wireframes"}, {"sphere","Wireframes"}, {"knot","Wireframes"},
   {"mobius","Wireframes"}, {"helix","Wireframes"},
+  {"atom","Science"},
 };
 // Everything downstream still wants a plain name by index.
 static const char* faceName(uint8_t i) { return kFaces[i].name; }
@@ -512,6 +513,12 @@ static uint8_t npFace() {
 // act on a TRANSITION (playback starting, or the song changing), and treat any
 // deliberate face choice as an override that holds until the music stops.
 static bool autoNowPlaying = true;    // master switch, persisted
+static bool wobbleOn = true;          // anti-burn-in drift, persisted
+
+static void sendWobble() {
+  const uint8_t p[1] = { (uint8_t)(wobbleOn ? 1 : 0) };
+  sendFrame(proto::Msg::SetWobble, p, 1);
+}
 static bool npWasPlaying   = false;
 static String npLastSong;
 static bool npOverridden   = false;   // user picked something else; leave them be
@@ -588,6 +595,7 @@ static void publishState() {
   mqtt.publish(topic("face/state").c_str(), faceName(curFace), true);
   char b[8]; snprintf(b, sizeof b, "%u", curBrightness);
   mqtt.publish(topic("brightness/state").c_str(), b, true);
+  mqtt.publish(topic("wobble/state").c_str(), wobbleOn ? "ON" : "OFF", true);
 }
 
 static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
@@ -651,6 +659,11 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
     sendGauges(pct, labels, 3, footer);
   } else if (tp == topic("notify/set")) {
     applyNotify(msg, bannerMs);
+  } else if (tp == topic("wobble/set")) {
+    wobbleOn = !(msg.equalsIgnoreCase("off") || msg == "0" || msg.equalsIgnoreCase("false"));
+    prefs.begin("scopeclock", false); prefs.putUChar("wobble", wobbleOn ? 1 : 0); prefs.end();
+    sendWobble();
+    mqtt.publish(topic("wobble/state").c_str(), wobbleOn ? "ON" : "OFF", true);
   } else if (tp == topic("banner/set")) {
     sendBanner(msg.c_str(), bannerMs);
   } else if (tp == topic("banner/duration")) {
@@ -716,6 +729,12 @@ static void publishDiscovery() {
       + "\"options\":[" + opts + "],"
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
   mqtt.publish((String("homeassistant/select/") + cfg.mqttPrefix + "/face/config").c_str(), j.c_str(), true);
+
+  j = String("{\"name\":\"Anti burn-in drift\",\"uniq_id\":\"" MQTT_PREFIX "_wobble\",")
+      + "\"cmd_t\":\"" + topic("wobble/set") + "\",\"stat_t\":\"" + topic("wobble/state") + "\","
+      + "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"ic\":\"mdi:television-shimmer\","
+      + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+  mqtt.publish((String("homeassistant/switch/") + cfg.mqttPrefix + "/wobble/config").c_str(), j.c_str(), true);
 
   j = String("{\"name\":\"Brightness\",\"uniq_id\":\"" MQTT_PREFIX "_bri\",")
       + "\"cmd_t\":\"" + topic("brightness/set") + "\",\"stat_t\":\"" + topic("brightness/state") + "\","
@@ -804,6 +823,7 @@ static void mqttConnect() {
   statusFresh = true;                 // republish everything on this connection
   if (cfg.npTopic.length())    mqtt.subscribe(cfg.npTopic.c_str());
   if (cfg.gaugeTopic.length()) mqtt.subscribe(cfg.gaugeTopic.c_str());
+  mqtt.subscribe(topic("wobble/set").c_str());
   mqtt.subscribe(topic("notify/set").c_str());
   mqtt.subscribe(topic("banner/set").c_str());
   mqtt.subscribe(topic("banner/duration").c_str());
@@ -920,9 +940,10 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
   switch (static_cast<proto::Msg>(id)) {
     case proto::Msg::Hello:
       rxHello = true;
-      // The device comes up with every face at 100; hand it the saved table
-      // before anyone sees the wrong size.
+      // The device comes up with every face at 100 and the drift on; hand it
+      // what was actually chosen before anyone sees otherwise.
       sendScales();
+      sendWobble();
       break;
     case proto::Msg::Status: {
       if (len < sizeof(proto::StatusPayload)) break;
@@ -985,6 +1006,7 @@ static void handleState() {
   j += "\"bri\":"  + String(curBrightness) + ",";
   j += "\"scale\":" + String(curFace < 32 ? faceScale[curFace] : kDefaultScale) + ",";
   j += "\"autonp\":" + String(autoNowPlaying ? 1 : 0) + ",";
+  j += "\"wobble\":" + String(wobbleOn ? 1 : 0) + ",";
   j += "\"frame\":" + String(haveStatus ? s.frameUs : 0) + ",";
   j += "\"hz\":"    + String(haveStatus ? s.hz : 0) + ",";
   j += "\"rtc\":"   + String(haveStatus && s.rtcOk ? 1 : 0) + ",";
@@ -1033,6 +1055,11 @@ static void handleApi() {
     curBrightness = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
     const uint8_t p[1] = { curBrightness };
     sendFrame(proto::Msg::SetBrightness, p, 1);
+  } else if (uri.endsWith("/wobble")) {
+    wobbleOn = !(body == "0" || body.equalsIgnoreCase("off"));
+    prefs.begin("scopeclock", false); prefs.putUChar("wobble", wobbleOn ? 1 : 0); prefs.end();
+    sendWobble();
+    mqtt.publish(topic("wobble/state").c_str(), wobbleOn ? "ON" : "OFF", true);
   } else if (uri.endsWith("/autonp")) {
     autoNowPlaying = !(body == "0" || body.equalsIgnoreCase("off"));
     prefs.begin("scopeclock", false);
@@ -1191,6 +1218,7 @@ void setup() {
   scaleLoad();
   prefs.begin("scopeclock", true);
   autoNowPlaying = prefs.getUChar("autonp", 1) != 0;
+  wobbleOn       = prefs.getUChar("wobble", 1) != 0;
   prefs.end();
 
   WiFi.mode(WIFI_STA);
@@ -1250,6 +1278,7 @@ void loop() {
     web.on("/api/faces", HTTP_GET, handleFaces);
     web.on("/api/face", HTTP_POST, handleApi);
     web.on("/api/brightness", HTTP_POST, handleApi);
+    web.on("/api/wobble", HTTP_POST, handleApi);
     web.on("/api/autonp", HTTP_POST, handleApi);
     web.on("/api/scale", HTTP_POST, handleApi);
     web.on("/api/notify", HTTP_POST, handleApi);
