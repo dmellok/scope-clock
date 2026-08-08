@@ -288,17 +288,29 @@ static WiFiClient   net;
 static PubSubClient mqtt(net);
 
 // Must match faces.cpp on the device, in order — Status reports an index and
-// this is what turns it back into a name. Grouped by the device's families, so
-// the order here also drives how the picker reads.
-static const char* const kFaceNames[] = {
-  "hands", "numbers", "tickdial", "orbit", "sector",
-  "digital", "datetime", "wordclock", "binary",
-  "tetra", "cube", "octa", "icosa", "dodeca", "tesseract", "torus",
-  "lissajous", "harmonograph", "spirograph", "rose", "lorenz", "starpoly",
-  "starfield", "tunnel",
-  "midiscope", "midichord"
+// this is what turns it back into a name.
+//
+// The group is a column of the same table rather than a second table, because
+// the families it names are real: the knob on the clock walks between them and
+// the button walks within one. Keeping them side by side means adding a face is
+// still one line in one place, and a group cannot drift out of step with the
+// name it belongs to. Order IS the wire id — append, never insert.
+struct FaceEntry { const char* name; const char* group; };
+static const FaceEntry kFaces[] = {
+  {"hands","Analog"}, {"numbers","Analog"}, {"tickdial","Analog"},
+  {"orbit","Analog"}, {"sector","Analog"},
+  {"digital","Digital"}, {"datetime","Digital"}, {"wordclock","Digital"},
+  {"binary","Digital"},
+  {"tetra","Solids"}, {"cube","Solids"}, {"octa","Solids"}, {"icosa","Solids"},
+  {"dodeca","Solids"}, {"tesseract","Solids"}, {"torus","Solids"},
+  {"lissajous","Curves"}, {"harmonograph","Curves"}, {"spirograph","Curves"},
+  {"rose","Curves"}, {"lorenz","Curves"}, {"starpoly","Curves"},
+  {"starfield","Motion"}, {"tunnel","Motion"},
+  {"midiscope","MIDI"}, {"midichord","MIDI"},
 };
-constexpr uint8_t kFaceCount = sizeof(kFaceNames) / sizeof(kFaceNames[0]);
+// Everything downstream still wants a plain name by index.
+static const char* faceName(uint8_t i) { return kFaces[i].name; }
+constexpr uint8_t kFaceCount = sizeof(kFaces) / sizeof(kFaces[0]);
 static uint8_t  curFace       = 0;
 static uint8_t  curBrightness = 255;
 static uint16_t bannerMs      = 8000;
@@ -352,7 +364,7 @@ static void sceneLine(B& b, const String& ln) {
 }
 
 static void publishState() {
-  mqtt.publish(topic("face/state").c_str(), kFaceNames[curFace], true);
+  mqtt.publish(topic("face/state").c_str(), faceName(curFace), true);
   char b[8]; snprintf(b, sizeof b, "%u", curBrightness);
   mqtt.publish(topic("brightness/state").c_str(), b, true);
 }
@@ -370,7 +382,7 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
     if (v > 0 && v <= 60000) bannerMs = (uint16_t)v;
   } else if (tp == topic("face/set")) {
     for (uint8_t i = 0; i < kFaceCount; ++i) {
-      if (msg.equalsIgnoreCase(kFaceNames[i])) { curFace = i; break; }
+      if (msg.equalsIgnoreCase(faceName(i))) { curFace = i; break; }
     }
     sendSetMode(0, curFace);            // 0 = local face
     publishState();
@@ -415,13 +427,13 @@ static void publishDiscovery() {
                    + "\"mf\":\"Cathode Corner\",\"mdl\":\"SCTV\"}";
   String j;
 
-  // Built from kFaceNames rather than typed out again: a second copy of the
+  // Built from the face table rather than typed out again: a second copy of the
   // list is a second thing to forget when a face is added, and the symptom
   // (a face the knob can select but the dropdown cannot) is a confusing one.
   String opts;
   for (uint8_t i = 0; i < kFaceCount; ++i) {
     if (i) opts += ',';
-    opts += '"'; opts += kFaceNames[i]; opts += '"';
+    opts += '"'; opts += faceName(i); opts += '"';
   }
   j = String("{\"name\":\"Face\",\"uniq_id\":\"" MQTT_PREFIX "_face\",")
       + "\"cmd_t\":\"" + topic("face/set") + "\",\"stat_t\":\"" + topic("face/state") + "\","
@@ -577,7 +589,7 @@ static void publishStatus(const proto::StatusPayload& s) {
     // what is actually on the tube rather than what HA last asked for.
     if (s.faceId < kFaceCount) {
       curFace = s.faceId;
-      mqtt.publish(topic("face/state").c_str(), kFaceNames[curFace], true);
+      mqtt.publish(topic("face/state").c_str(), faceName(curFace), true);
     }
   }
   if (first || s.brightness != prev.brightness) {
@@ -663,7 +675,7 @@ static String field(const char* label, const char* name, const String& val, bool
 static void handleState() {
   const proto::StatusPayload& s = lastStatus;
   String j = "{";
-  j += "\"face\":\"" + String(curFace < kFaceCount ? kFaceNames[curFace] : "?") + "\",";
+  j += "\"face\":\"" + String(curFace < kFaceCount ? faceName(curFace) : "?") + "\",";
   j += "\"mode\":" + String(haveStatus ? s.mode : 0) + ",";
   j += "\"bri\":"  + String(curBrightness) + ",";
   j += "\"frame\":" + String(haveStatus ? s.frameUs : 0) + ",";
@@ -688,7 +700,8 @@ static void handleFaces() {
   String j = "[";
   for (uint8_t i = 0; i < kFaceCount; ++i) {
     if (i) j += ',';
-    j += '"'; j += kFaceNames[i]; j += '"';
+    j += "{\"n\":\""; j += kFaces[i].name;
+    j += "\",\"g\":\""; j += kFaces[i].group; j += "\"}";
   }
   j += ']';
   web.send(200, "application/json", j);
@@ -706,7 +719,7 @@ static void handleApi() {
   if (!body.length() && web.args() > 0) body = web.argName(0);
   if (uri.endsWith("/face")) {
     for (uint8_t i = 0; i < kFaceCount; ++i)
-      if (body.equalsIgnoreCase(kFaceNames[i])) { curFace = i; break; }
+      if (body.equalsIgnoreCase(faceName(i))) { curFace = i; break; }
     sendSetMode(0, curFace);
   } else if (uri.endsWith("/brightness")) {
     const long v = body.toInt();

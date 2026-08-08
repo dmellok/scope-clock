@@ -68,6 +68,16 @@ button.primary{border-color:rgba(61,220,132,.45);color:var(--accent)}
 button.primary:hover{background:rgba(61,220,132,.10)}
 
 .chips{display:flex;flex-wrap:wrap;gap:6px}
+/* Six families of two to seven faces. As one flat run of 26 chips it read as a
+   heap; grouped, the row you want is findable and the layout also says out loud
+   what the knob does. */
+.fam{display:grid;gap:12px 20px;grid-template-columns:1fr}
+@media(min-width:560px){.fam{grid-template-columns:repeat(auto-fill,minmax(232px,1fr))}}
+.fam h3{margin:0 0 6px;font-size:10.5px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.09em;color:#6d7a76;display:flex;align-items:center;gap:7px}
+.fam h3::after{content:"";flex:1;height:1px;background:var(--line)}
+.fam h3.act{color:var(--accent)}
+.fam h3.act::after{background:rgba(61,220,132,.28)}
 .chip{font-size:12px;padding:6px 10px;border-radius:6px;letter-spacing:.01em}
 .chip.on{border-color:rgba(61,220,132,.5);color:var(--accent);background:rgba(61,220,132,.12)}
 
@@ -138,9 +148,10 @@ footer a:hover{text-decoration:underline}
 
 <section class="span2">
   <h2><svg class="i"><use href="#i-clock"/></svg>Face</h2>
-  <div class="chips" id="faces"></div>
-  <p class="hint">The knob on the clock picks the kind of face; the button cycles
-    the style within it. Either overrides whatever is pushed.</p>
+  <div id="faces" class="fam"></div>
+  <p class="hint">Grouped the way the clock is: the knob walks between these
+    families, the button walks the faces inside one. Either overrides whatever
+    is pushed.</p>
 </section>
 
 <section>
@@ -249,9 +260,18 @@ function setDot(cls,txt){el("dot").className="dot "+cls;el("sub").textContent=tx
 // shows up here without this page being touched. Delegated click, so there is
 // no quoting of face names into onclick attributes.
 fetch("/api/faces").then(function(r){return r.json()}).then(function(a){
-  FACES=a;
-  el("faces").innerHTML=a.map(function(f){
-    return '<button class="chip" data-f="'+f+'">'+f+'</button>'}).join("");
+  FACES=a.map(function(e){return e.n});
+  var html="", g=null, open=false;
+  a.forEach(function(e){
+    if(e.g!==g){
+      if(open)html+="</div></div>";
+      g=e.g; open=true;
+      html+='<div data-g="'+e.g+'"><h3>'+e.g+'</h3><div class="chips">';
+    }
+    html+='<button class="chip" data-f="'+e.n+'">'+e.n+'</button>';
+  });
+  if(open)html+="</div></div>";
+  el("faces").innerHTML=html;
   poll();
 });
 el("faces").addEventListener("click",function(e){
@@ -530,8 +550,13 @@ function poll(){
     var deaf=(s.silent>=0&&s.silent!=65535&&s.silent>20);
     var sick=deaf||!s.rtc||s.sync<0;
     setDot(sick?"warn":"ok", s.face+" · "+mn);
+    var act=null;
     FACES.forEach(function(f){var b=document.querySelector('[data-f="'+f+'"]');
-      if(b)b.className="chip"+(f==s.face?" on":"")});
+      if(!b)return;
+      var on=(f==s.face); b.className="chip"+(on?" on":"");
+      if(on)act=b.closest("[data-g]");});
+    document.querySelectorAll(".fam h3").forEach(function(h){
+      h.className=(act&&h.parentNode===act)?"act":""});
     if(document.activeElement!==el("bri")){el("bri").value=s.bri;el("brival").textContent=s.bri}
     el("s-mode").textContent=mn;
     var pct=s.hz?Math.round(s.frame*s.hz/10000):0;

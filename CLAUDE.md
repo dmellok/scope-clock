@@ -43,8 +43,10 @@ bridge, host-uploadable face templates, and a web config page.
 
 Faces live in `faces_time/_3d/_gen/_midi.cpp` behind `faces_impl.h`; `faces.cpp`
 is only the registry and the knob/button navigation. **Face order is the wire
-id** — append, never insert, and the bridge derives its MQTT and web lists from
-`kFaceNames[]` so there is one list to update, not three.
+id** — append, never insert. The bridge's `kFaces[]` carries each name with its
+family group, and MQTT discovery, the web picker and the API all derive from
+that one table. `tools/check_faces.py` proves it still matches the device's
+registry and `kFamilies` runs, from source alone — run it after adding a face.
 The bridge flashes over Wi-Fi (`pio run -e atoms3u_ota -t upload`); the Teensy
 flashes in one command (`pio run -t upload`).
 
