@@ -44,6 +44,11 @@ struct DrawList {
   }
 };
 
+// Scale a composed list about the origin, in percent. Applied to the FACE only,
+// after centring and before the notification overlay, so a face can be sized to
+// the tube without the overlay moving with it.
+void scaleList(DrawList& list, int pct);
+
 // Resolve a template in place: Clock items become Text with the RTC formatted
 // into `scratch`, Hand items become Line with endpoints from the current time.
 // Everything else is left alone, so a list with no template items is untouched.

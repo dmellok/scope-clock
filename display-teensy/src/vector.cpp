@@ -28,7 +28,27 @@ constexpr int kMotionDelay   = 15;    // us of settling per unit of beam travel
 constexpr int kSettlingDelay = 8;     // us of fixed settling before unblanking
 constexpr int kGlowDelay     = 2;     // us for the phosphor to come up / decay
 constexpr int kCircleSpeed   = 200;   // angular step; bigger = faster, coarser
-constexpr int kLineStride    = 1;     // linear step; bigger = faster, coarser
+// A dot every 2 DAC counts, not every 1. The picture is 1.5x bigger than it was
+// (see the display scale below), so holding the spacing at 1 would have cost 1.5x
+// the beam travel for the same apparent density — and it put two faces over the
+// frame budget. 2 counts is far finer than the beam spot on a 3600-count-wide
+// tube, and tuneDwell raises the dwell to keep total beam-on time, so brightness
+// is unchanged.
+constexpr int kLineStride    = 2;     // linear step; bigger = faster, coarser
+
+// --- display scale ----------------------------------------------------------
+// Device units are not DAC counts. Every face, scene and overlay in this
+// firmware is authored against a working edge of 1200, but the tube's usable
+// radius is about 1800 DAC counts — measured by putting concentric rings on the
+// screen and looking, which is the only way to know. Drawing 1:1 therefore used
+// two thirds of the glass and left a dark ring all the way round.
+//
+// One scale here rather than 27 edited faces: line() and ellipseArc() are the
+// only two primitives, text goes through them, and pushed scenes and the
+// notification overlay do too. So device coordinates keep meaning what they
+// always meant and the picture simply fills the tube.
+constexpr int kFieldNum = 3, kFieldDen = 2;      // 1200 -> 1800
+inline int sc(int v) { return v * kFieldNum / kFieldDen; }
 
 int32_t sintab[kSteps];
 int32_t costab[kSteps];
@@ -144,6 +164,7 @@ int32_t cosT(int idx) { return costab[((idx % kSteps) + kSteps) % kSteps]; }
 void setTrim(int x, int y) { trimX = x; trimY = y; }
 
 void line(int x0, int y0, int x1, int y1) {
+  x0 = sc(x0); y0 = sc(y0); x1 = sc(x1); y1 = sc(y1);
   const int xs = toDacX(x0), ys = toDacY(y0);
   const int xlen = x1 - x0, ylen = y1 - y0;
 
@@ -171,6 +192,7 @@ void line(int x0, int y0, int x1, int y1) {
 }
 
 void ellipseArc(int cx, int cy, int xrad, int yrad, int firstO, int lastO) {
+  cx = sc(cx); cy = sc(cy); xrad = sc(xrad); yrad = sc(yrad);
   const int xcen = toDacX(cx), ycen = toDacY(cy);
   const int firstAngle =  firstO      * (kSteps >> 3);
   const int lastAngle  = (lastO + 1)  * (kSteps >> 3);

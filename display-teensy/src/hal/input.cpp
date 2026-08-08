@@ -85,6 +85,7 @@ void encIsr() {
 // but classified on release so a long hold can be told apart from a tap.
 constexpr uint8_t  kDebouncePolls = 3;
 constexpr uint32_t kLongPressMs   = 800;
+constexpr uint32_t kScaleIdleMs   = 8000;   // scale mode gives the knob back
 uint8_t  butHist    = 0;
 bool     butDown    = false;
 bool     longSent   = false;
@@ -120,7 +121,22 @@ void poll(DeviceState& dev) {
   encDelta = 0;
   interrupts();
 
-  if (detents != 0) {
+  // Scale mode times out on its own. A knob left in a special mode is a knob
+  // that will confuse whoever next touches it, and there is no display hint
+  // beyond the size changing.
+  if (dev.scaleMode && (int32_t)(millis() - dev.scaleModeUntilMs) >= 0)
+    dev.scaleMode = false;
+
+  if (detents != 0 && dev.scaleMode) {
+    // Adjusting the size of the face in front of you, not choosing another one.
+    int v = dev.faceScale[dev.faceId % DeviceState::kMaxFaces] + detents * 5;
+    if (v < 40)  v = 40;
+    if (v > 250) v = 250;
+    dev.faceScale[dev.faceId % DeviceState::kMaxFaces] = (uint8_t)v;
+    dev.scaleModeUntilMs = millis() + kScaleIdleMs;
+    const uint8_t p[2] = { dev.faceId, (uint8_t)v };
+    hal::link::send(static_cast<uint8_t>(proto::Msg::EventScale), p, 2);
+  } else if (detents != 0) {
     // The knob moves between kinds of face; the button (below) changes the
     // style within one. Two controls, two jobs. Faces stay local so the clock
     // keeps working with no host attached — the host is only told it moved.
@@ -141,12 +157,20 @@ void poll(DeviceState& dev) {
     }
     if (butDown && !longSent && (millis() - butDownMs) >= kLongPressMs) {
       longSent = true;
+      // The long press had no local job until now. It toggles scale mode: hold
+      // it, then turn the knob to size the face you are looking at.
+      dev.scaleMode = !dev.scaleMode;
+      dev.scaleModeUntilMs = millis() + kScaleIdleMs;
+      dev.mode = Mode::Face;
       sendButton(1);                                 // long, reported on hold
     }
   } else {
     if (butDown && !longSent) {
-      dev.faceId = faces::nextVariant(dev.faceId);   // roman dial <-> numbered
-      dev.mode   = Mode::Face;
+      // A tap is the way out of scale mode, so nobody has to wait for the
+      // timeout or hold the button again to get their knob back.
+      if (dev.scaleMode) dev.scaleMode = false;
+      else               dev.faceId = faces::nextVariant(dev.faceId);
+      dev.mode = Mode::Face;
       sendButton(0);                                 // tap, reported on release
     }
     butHist = 0;

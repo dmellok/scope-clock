@@ -25,12 +25,14 @@ enum class Msg : uint8_t {
   PushChunk      = 0x09,   // append raw PushList bytes to the staging buffer
   PushCommit     = 0x0A,   // decode what was staged and show it
   Notify         = 0x0B,   // title + body overlay, placed, auto-expiring
+  SetScales      = 0x0C,   // per-face render scale, percent, one byte each
   // device -> host
   Hello          = 0x81,   // fw version, caps, panel size
   Pong           = 0x82,
   EventEncoder   = 0x83,   // signed delta
   EventButton    = 0x84,   // press | long
   Status         = 0x85,   // uptime, rtc ok + last-set age, mode, frame us
+  EventScale     = 0x86,   // face id + new scale, when set at the knob
 };
 
 // CRC-8, polynomial 0x07. Incremental so a receiver can fold each byte in as
@@ -99,6 +101,11 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 //              A text item at x=0,y=0 opts into the device's own centring.
 //
 // Banner       [ms:u16][priority:u8][chars...]   text runs to end of payload
+// SetScales    [count:u8][pct:u8 x count]   100 = nominal, clamped 40..250.
+//                Sent on Hello and whenever the host changes one, so the
+//                device can apply it without a round trip when the knob
+//                selects a face.
+// EventScale   [faceId:u8][pct:u8]   the knob changed a scale; save it.
 // Notify       [ms:u16][place:u8][titleLen:u8][title][body]
 //                place: low bits 0 bottom strip, 1 top strip, 2 centred card;
 //                bit 0x80 = solo, i.e. blank the face behind it.

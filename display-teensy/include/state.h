@@ -32,6 +32,22 @@ struct DeviceState {
                                 // slower than hz. Reported via Msg::Status.
   bool      hostPresent = false;
 
+  // Per-face render scale, percent of nominal. Faces are authored against one
+  // size but a tube's usable area is its own; this is the adjustment, and it is
+  // per face because a dense face and a sparse one want different answers.
+  // The host owns the persistence and re-sends the table on Hello.
+  static constexpr uint8_t kMaxFaces = 32;
+  // 70% of the render's nominal size. The render scales device units by 3/2 to
+  // reach the tube's 1800-count rim, which puts a face's own 1200-unit edge
+  // exactly on the glass — right for a full-bleed animation, too tight for a
+  // dial whose numerals then touch the rim. 70% insets it to a clock face.
+  static constexpr uint8_t kDefaultScale = 70;
+  uint8_t   faceScale[kMaxFaces];
+  bool      scaleMode = false;      // knob is adjusting scale, not choosing faces
+  uint32_t  scaleModeUntilMs = 0;
+
+  DeviceState() { for (uint8_t i = 0; i < kMaxFaces; ++i) faceScale[i] = kDefaultScale; }
+
   DrawList  pushed;             // host-authored list when mode == Pushed
   // Backing store for pushed text. Item holds a const char*, and the link's
   // receive buffer is overwritten by the next frame, so the strings have to be

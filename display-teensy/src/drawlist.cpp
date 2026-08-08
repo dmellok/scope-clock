@@ -198,3 +198,22 @@ void expandTemplate(DrawList& list, const ClockState& clk,
     it.str  = dst;
   }
 }
+
+// Scale about the origin. Text carries its size in `scale`, so that has to move
+// with the geometry or the letters stay put while the layout grows around them.
+void scaleList(DrawList& list, int pct) {
+  if (pct == 100) return;
+  auto s16 = [&](int16_t v) { return (int16_t)((int32_t)v * pct / 100); };
+  for (uint8_t i = 0; i < list.count; ++i) {
+    Item& it = list.items[i];
+    it.x = s16(it.x); it.y = s16(it.y);
+    switch (it.type) {
+      case ItemType::Line:
+      case ItemType::Hand:   it.x2 = s16(it.x2); it.y2 = s16(it.y2); break;
+      case ItemType::Circle: it.x2 = s16(it.x2); break;      // x2 is the radius
+      case ItemType::Text:
+      case ItemType::Clock:  it.scale = s16(it.scale); if (it.scale < 1) it.scale = 1; break;
+      default: break;
+    }
+  }
+}

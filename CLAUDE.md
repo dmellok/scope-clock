@@ -107,6 +107,23 @@ clone it alongside.
   is handled in the USB ISR, which keeps running when the main loop does not).
   Worth knowing against the OTA-rejection reasoning below: a *hang* is not the
   same as a failed FlasherX leaving no valid application.
+- **Device units are NOT DAC counts, and the tube's radius is ~1800.** Measured,
+  not assumed: push concentric rings (`C 0 0 600` … `C 0 0 1800`) and look. Every
+  face here is authored against a 1200-unit working edge, so `vec::` scales by
+  3/2 on the way to the DAC — one place, because `line()` and `ellipseArc()` are
+  the only primitives and text, scenes and overlays all go through them. Drawing
+  1:1 used two thirds of the glass.
+  Consequences worth knowing: `kLineStride` went 1 → 2, because a 1.5x bigger
+  picture at the same dot spacing costs 1.5x the beam travel and put two faces
+  over budget — 2 counts is far finer than the spot, and `tuneDwell` restores the
+  brightness. And anything in device units that must stay on the glass has to sit
+  at or under 1200 (the notification strips were at 1215, which was inside the
+  old field and outside this one).
+- **Per-face scale defaults to 70%.** 100% puts a face's own 1200-unit edge on
+  the rim, which suits a full-bleed animation and crowds a dial whose numerals
+  then touch the glass. The bridge owns the persistence (NVS, `fscale`) because
+  the Teensy has nowhere to keep it, and re-sends the whole table on Hello.
+  Long-press the knob's button on the clock to adjust the showing face by hand.
 - **The tube is ROUND; the draw list is not.** An animation laid out in a
   rectangle spends beam time in the corners where there is no phosphor. The
   matrix face gives each column the chord the circle actually allows it —

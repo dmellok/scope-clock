@@ -23,7 +23,10 @@ namespace {
 constexpr int kTitleScale = 9;
 constexpr int kBodyScale  = 7;
 constexpr int kGap        = 40;    // between title and body
-constexpr int kEdge       = 1215;  // outer edge of a strip's ink
+// Device units, which the render scales by 3/2 on the way to the DAC — so this
+// must stay at or under 1200, or a strip's ink lands past the 1800-count rim.
+// It used to be 1215, which was inside the old 1:1 field and outside this one.
+constexpr int kEdge       = 1195;  // outer edge of a strip's ink
 constexpr int kPad        = 90;    // card padding around the text block
 
 constexpr int kLineMax = 2350;   // widest a strip may get before it clips
@@ -114,7 +117,10 @@ void overlayNotify(DeviceState& dev, DrawList& list) {
   // card's frame correct for a title-less notice.
   const int lastBase = (hasTitle && hasBody) ? topBase - gap - bh : topBase;
 
-  const int cw = (tw > bw ? tw : bw) / 2 + kPad;
+  // Clamped, because the body can be 63 characters and the frame would otherwise
+  // be drawn wider than the glass.
+  int cw = (tw > bw ? tw : bw) / 2 + kPad;
+  if (cw > 1150) cw = 1150;
   frame(list, -cw, lastBase - kPad / 2, cw, topBase + firstH + kPad / 2);
 
   if (hasTitle) list.text(-tw / 2, topBase, kTitleScale, dev.noteTitle);

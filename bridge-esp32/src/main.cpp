@@ -385,6 +385,46 @@ static const FaceEntry kFaces[] = {
 static const char* faceName(uint8_t i) { return kFaces[i].name; }
 constexpr uint8_t kFaceCount = sizeof(kFaces) / sizeof(kFaces[0]);
 static uint8_t  curFace       = 0;
+
+// Per-face render scale, percent. The device holds the live copy and applies it;
+// the bridge owns the persistence, because the Teensy has nowhere to keep it and
+// the bridge already has NVS for config. Saved lazily: the knob emits one of
+// these per detent and NVS is flash.
+static uint8_t  faceScale[32];
+static bool     scaleDirty = false;
+static uint32_t scaleSaveAt = 0;
+
+// Must match DeviceState::kDefaultScale, which is what the device uses until
+// this table reaches it.
+constexpr uint8_t kDefaultScale = 70;
+
+static void scaleLoad() {
+  for (uint8_t i = 0; i < 32; ++i) faceScale[i] = kDefaultScale;
+  prefs.begin("scopeclock", true);
+  // Pre-filled above, so an absent key simply leaves the defaults in place.
+  prefs.getBytes("fscale", faceScale, sizeof faceScale);
+  prefs.end();
+  for (uint8_t i = 0; i < 32; ++i)
+    if (faceScale[i] < 40 || faceScale[i] > 250) faceScale[i] = kDefaultScale;
+}
+static void scaleSaveSoon() { scaleDirty = true; scaleSaveAt = millis() + 2000; }
+static void scaleSaveTick() {
+  if (!scaleDirty || (int32_t)(millis() - scaleSaveAt) < 0) return;
+  scaleDirty = false;
+  prefs.begin("scopeclock", false);
+  prefs.putBytes("fscale", faceScale, sizeof faceScale);
+  prefs.end();
+}
+
+// The whole table in one frame: 27 faces plus a count is well inside a payload,
+// and sending it whole means there is no partial state to reason about.
+static void sendScales() {
+  uint8_t p[proto::MAX_PAYLOAD];
+  const uint8_t n = kFaceCount < 32 ? kFaceCount : 32;
+  p[0] = n;
+  for (uint8_t i = 0; i < n; ++i) p[1 + i] = faceScale[i];
+  sendFrame(proto::Msg::SetScales, p, (uint8_t)(n + 1));
+}
 static uint8_t  curBrightness = 255;
 static uint16_t bannerMs      = 8000;
 
@@ -716,6 +756,9 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
   switch (static_cast<proto::Msg>(id)) {
     case proto::Msg::Hello:
       rxHello = true;
+      // The device comes up with every face at 100; hand it the saved table
+      // before anyone sees the wrong size.
+      sendScales();
       break;
     case proto::Msg::Status: {
       if (len < sizeof(proto::StatusPayload)) break;
@@ -733,6 +776,15 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
     case proto::Msg::EventButton:
       if (len >= 1)
         mqtt.publish(topic("event/button").c_str(), p[0] ? "long" : "press");
+      break;
+    case proto::Msg::EventScale:
+      // The knob changed a face's size. The device is already showing it; all
+      // this end has to do is remember.
+      if (len >= 2 && p[0] < 32 && p[1] >= 40 && p[1] <= 250) {
+        faceScale[p[0]] = p[1];
+        scaleSaveSoon();
+        mqtt.publish(topic("scale/state").c_str(), String(p[1]).c_str(), true);
+      }
       break;
     default: break;
   }
@@ -767,6 +819,7 @@ static void handleState() {
   j += "\"face\":\"" + String(curFace < kFaceCount ? faceName(curFace) : "?") + "\",";
   j += "\"mode\":" + String(haveStatus ? s.mode : 0) + ",";
   j += "\"bri\":"  + String(curBrightness) + ",";
+  j += "\"scale\":" + String(curFace < 32 ? faceScale[curFace] : kDefaultScale) + ",";
   j += "\"frame\":" + String(haveStatus ? s.frameUs : 0) + ",";
   j += "\"hz\":"    + String(haveStatus ? s.hz : 0) + ",";
   j += "\"rtc\":"   + String(haveStatus && s.rtcOk ? 1 : 0) + ",";
@@ -815,6 +868,12 @@ static void handleApi() {
     curBrightness = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
     const uint8_t p[1] = { curBrightness };
     sendFrame(proto::Msg::SetBrightness, p, 1);
+  } else if (uri.endsWith("/scale")) {
+    // Applies to whichever face is showing, which is the one the slider is for.
+    long v = body.toInt();
+    if (v < 40) v = 40;
+    if (v > 250) v = 250;
+    if (curFace < 32) { faceScale[curFace] = (uint8_t)v; scaleSaveSoon(); sendScales(); }
   } else if (uri.endsWith("/notify")) {
     applyNotify(body, bannerMs);
   } else if (uri.endsWith("/banner")) {
@@ -953,8 +1012,9 @@ static void pushLocalTime() {
 }
 
 void setup() {
-  TO_DISPLAY.begin(115200);
-  cfgLoad();             // native USB CDC to the display MCU
+  TO_DISPLAY.begin(115200);   // native USB CDC to the display MCU
+  cfgLoad();
+  scaleLoad();
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
@@ -1013,6 +1073,7 @@ void loop() {
     web.on("/api/faces", HTTP_GET, handleFaces);
     web.on("/api/face", HTTP_POST, handleApi);
     web.on("/api/brightness", HTTP_POST, handleApi);
+    web.on("/api/scale", HTTP_POST, handleApi);
     web.on("/api/notify", HTTP_POST, handleApi);
     web.on("/api/banner", HTTP_POST, handleApi);
     web.on("/api/scene", HTTP_POST, handleApi);
@@ -1028,6 +1089,7 @@ void loop() {
   // Blocks only while an update is actually in flight, and the device rides
   // that out on its own RTC — which is the entire point of it keeping time.
   ArduinoOTA.handle();
+  scaleSaveTick();     // lazy NVS write; the knob emits one event per detent
 
   mqttConnect();
   mqtt.loop();

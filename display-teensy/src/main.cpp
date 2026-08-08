@@ -128,6 +128,10 @@ void loop() {
     }
   }
   txt::centerLines(frame);       // 4. resolve text positions (no-op if placed)
+  // Per-face size, applied to the face and not to what goes on top of it, so a
+  // notification stays where it was put whatever the face is scaled to.
+  if (dev.mode == Mode::Face)
+    scaleList(frame, dev.faceScale[dev.faceId % DeviceState::kMaxFaces]);
   overlayNotify(dev, frame);     // 5. notification on top, already positioned
 
   vec::setBrightness(dev.brightness);

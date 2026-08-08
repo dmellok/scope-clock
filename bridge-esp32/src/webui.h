@@ -149,9 +149,19 @@ footer a:hover{text-decoration:underline}
 <section class="span2">
   <h2><svg class="i"><use href="#i-clock"/></svg>Face</h2>
   <div id="faces" class="fam"></div>
+  <div class="row" style="margin-top:14px">
+    <label class="mini" style="flex:1;gap:9px">size
+      <input type="range" id="fscale" min="40" max="250" step="5" style="flex:1">
+      <span id="fscaleval" style="min-width:3.2rem;text-align:right">--</span>
+    </label>
+  </div>
   <p class="hint">Grouped the way the clock is: the knob walks between these
     families, the button walks the faces inside one. Either overrides whatever
-    is pushed.</p>
+    is pushed.<br>
+    <b>Size</b> applies to the face showing now and is remembered per face, so a
+    dense one and a sparse one can each be sized to the tube. You can also set it
+    at the clock: <b>hold the knob's button</b> to enter size mode, turn to
+    adjust, tap to leave — it gives the knob back on its own after 8s.</p>
 </section>
 
 <section>
@@ -225,8 +235,8 @@ D -430 -1215 9 %H:%M:%S"></textarea>
     <button id="b-clear">Clear</button>
   </div>
   <p class="hint">Draw on the left or type on the right — they are the same scene,
-    kept in step. The dashed ring is the usable edge of the tube at &plusmn;1200;
-    the solid one is where the DAC runs out. Drag to make lines, circles and
+    kept in step. The dashed ring is the rim of the tube at &plusmn;1200 device
+    units; the solid one is where the DAC itself runs out. Drag to make lines, circles and
     hands; click to place text. With <b>Select</b>, drag an item to move it or
     grab a white handle to reshape it — line ends, circle and hand radii, and the
     right edge of a text box sets its scale. <b>Live</b> mirrors every edit
@@ -330,7 +340,11 @@ function inkH(s){return s*20}
 
 var items=[], tool="sel", sel=-1, drag=null;
 var cv=el("cv");
-var FIELD=1250, EDGE=1200, CAP=192;
+// Device units, as the firmware uses them. The render multiplies by 3/2 on the
+// way to the DAC, so 1200 device units is the rim of the tube (1800 counts) and
+// the DAC itself runs out at 1365. Measured on the glass with concentric rings,
+// not assumed.
+var FIELD=1365, EDGE=1200, CAP=192;
 
 function snapv(v){return el("snap").checked?Math.round(v/25)*25:Math.round(v)}
 function pt(ev){var p=cv.createSVGPoint();p.x=ev.clientX;p.y=ev.clientY;
@@ -569,6 +583,8 @@ document.addEventListener("keydown",function(e){
 });
 reparse();
 el("b-relink").onclick=function(){post("/api/relink","1")};
+el("fscale").oninput=function(){el("fscaleval").textContent=this.value+"%"};
+el("fscale").onchange=function(){post("/api/scale",this.value)};
 el("bri").oninput=function(){el("brival").textContent=this.value};
 el("bri").onchange=function(){post("/api/brightness",this.value)};
 
@@ -587,6 +603,10 @@ function poll(){
     document.querySelectorAll(".fam h3").forEach(function(h){
       h.className=(act&&h.parentNode===act)?"act":""});
     if(document.activeElement!==el("bri")){el("bri").value=s.bri;el("brival").textContent=s.bri}
+    // Left alone while it is being dragged, and while the knob is mid-adjust the
+    // device is the authority — this just follows it.
+    if(document.activeElement!==el("fscale")&&s.scale!==undefined){
+      el("fscale").value=s.scale; el("fscaleval").textContent=s.scale+"%"}
     el("s-mode").textContent=mn;
     var pct=s.hz?Math.round(s.frame*s.hz/10000):0;
     el("s-frame").innerHTML=s.hz+"Hz · "+(s.frame/1000).toFixed(1)+"ms ("+pct+"%)"+
