@@ -502,7 +502,27 @@ static uint8_t npFace() {
     if (!strcmp(kFaces[i].name, "nowplaying")) return i;
   return kFaceCount;
 }
-static bool autoNowPlaying = true;
+// Auto-show policy for the now-playing face.
+//
+// The first version switched whenever a track message arrived and the device
+// was on a local face — which meant every update yanked the screen back, and
+// navigating away while music played was impossible. Two things fix that: only
+// act on a TRANSITION (playback starting, or the song changing), and treat any
+// deliberate face choice as an override that holds until the music stops.
+static bool autoNowPlaying = true;    // master switch, persisted
+static bool npWasPlaying   = false;
+static String npLastSong;
+static bool npOverridden   = false;   // user picked something else; leave them be
+static int  npExpectFace   = -1;      // a switch we made, echoing back in Status
+
+// Called wherever a face is chosen on purpose — web, MQTT, or the knob.
+static void faceChosenByUser(uint8_t f) {
+  if (npExpectFace >= 0 && f == (uint8_t)npExpectFace) { npExpectFace = -1; return; }
+  // Only an override if there is something to override. Choosing a face while
+  // nothing is playing is just choosing a face, and must not stop the next
+  // track from showing itself — which is what it did.
+  if (npWasPlaying) npOverridden = true;
+}
 
 static void sendScales() {
   uint8_t p[proto::MAX_PAYLOAD];
@@ -585,10 +605,20 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
     sendNowPlaying(playing, (uint16_t)(dur / 1000), (uint16_t)(prog / 1000),
                    jsonField(msg, "name"), jsonField(msg, "artist"),
                    jsonField(msg, "album"));
-    if (autoNowPlaying && playing && npFace() < kFaceCount) {
-      // Only takes the screen from a local face. Something deliberately pushed
-      // stays put — a scene is a decision somebody made more recently.
-      if (!haveStatus || lastStatus.mode == 0) { curFace = npFace(); sendSetMode(0, curFace); }
+    const String song = jsonField(msg, "song_id");
+    const bool started = playing && !npWasPlaying;
+    const bool changed = playing && song.length() && song != npLastSong;
+    if (!playing) npOverridden = false;   // a fresh start earns the screen again
+    npWasPlaying = playing;
+    if (song.length()) npLastSong = song;
+
+    if (autoNowPlaying && (started || changed) && !npOverridden
+        && npFace() < kFaceCount
+        && (!haveStatus || lastStatus.mode == 0)) {
+      // A pushed scene is a more recent decision than any default, so it stays.
+      curFace = npFace();
+      npExpectFace = (int)curFace;
+      sendSetMode(0, curFace);
     }
   } else if (tp == cfg.gaugeTopic) {
     // Three utilisation figures, each in its own nested object, plus a countdown
@@ -626,7 +656,7 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
     if (v > 0 && v <= 60000) bannerMs = (uint16_t)v;
   } else if (tp == topic("face/set")) {
     for (uint8_t i = 0; i < kFaceCount; ++i) {
-      if (msg.equalsIgnoreCase(faceName(i))) { curFace = i; break; }
+      if (msg.equalsIgnoreCase(faceName(i))) { curFace = i; faceChosenByUser(i); break; }
     }
     sendSetMode(0, curFace);            // 0 = local face
     publishState();
@@ -849,6 +879,7 @@ static void publishStatus(const proto::StatusPayload& s) {
     // what is actually on the tube rather than what HA last asked for.
     if (s.faceId < kFaceCount) {
       curFace = s.faceId;
+      faceChosenByUser(curFace);      // the knob counts as choosing
       mqtt.publish(topic("face/state").c_str(), faceName(curFace), true);
     }
   }
@@ -951,6 +982,7 @@ static void handleState() {
   j += "\"mode\":" + String(haveStatus ? s.mode : 0) + ",";
   j += "\"bri\":"  + String(curBrightness) + ",";
   j += "\"scale\":" + String(curFace < 32 ? faceScale[curFace] : kDefaultScale) + ",";
+  j += "\"autonp\":" + String(autoNowPlaying ? 1 : 0) + ",";
   j += "\"frame\":" + String(haveStatus ? s.frameUs : 0) + ",";
   j += "\"hz\":"    + String(haveStatus ? s.hz : 0) + ",";
   j += "\"rtc\":"   + String(haveStatus && s.rtcOk ? 1 : 0) + ",";
@@ -992,13 +1024,18 @@ static void handleApi() {
   if (!body.length() && web.args() > 0) body = web.argName(0);
   if (uri.endsWith("/face")) {
     for (uint8_t i = 0; i < kFaceCount; ++i)
-      if (body.equalsIgnoreCase(faceName(i))) { curFace = i; break; }
+      if (body.equalsIgnoreCase(faceName(i))) { curFace = i; faceChosenByUser(i); break; }
     sendSetMode(0, curFace);
   } else if (uri.endsWith("/brightness")) {
     const long v = body.toInt();
     curBrightness = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
     const uint8_t p[1] = { curBrightness };
     sendFrame(proto::Msg::SetBrightness, p, 1);
+  } else if (uri.endsWith("/autonp")) {
+    autoNowPlaying = !(body == "0" || body.equalsIgnoreCase("off"));
+    prefs.begin("scopeclock", false);
+    prefs.putUChar("autonp", autoNowPlaying ? 1 : 0);
+    prefs.end();
   } else if (uri.endsWith("/scale")) {
     // Applies to whichever face is showing, which is the one the slider is for.
     long v = body.toInt();
@@ -1150,6 +1187,9 @@ void setup() {
   TO_DISPLAY.begin(115200);   // native USB CDC to the display MCU
   cfgLoad();
   scaleLoad();
+  prefs.begin("scopeclock", true);
+  autoNowPlaying = prefs.getUChar("autonp", 1) != 0;
+  prefs.end();
 
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
@@ -1208,6 +1248,7 @@ void loop() {
     web.on("/api/faces", HTTP_GET, handleFaces);
     web.on("/api/face", HTTP_POST, handleApi);
     web.on("/api/brightness", HTTP_POST, handleApi);
+    web.on("/api/autonp", HTTP_POST, handleApi);
     web.on("/api/scale", HTTP_POST, handleApi);
     web.on("/api/notify", HTTP_POST, handleApi);
     web.on("/api/banner", HTTP_POST, handleApi);

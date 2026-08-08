@@ -113,6 +113,14 @@ clone it alongside.
   Same shape as the RTC: the host supplies truth, the device keeps time against
   it. `gauges` is deliberately generic — n labelled percentages and a footer,
   nothing about where they came from — so any topic can drive it.
+- **Auto-showing a face must be edge-triggered and overridable.** The first
+  now-playing version switched whenever a track message arrived and the device
+  was on a local face, so every update yanked the screen back and navigating
+  away while music played was impossible. It now fires only on a transition
+  (playback starting, or the song id changing), and a deliberate face choice —
+  web, MQTT or the knob — suppresses it until playback stops. The subtlety that
+  bit next: an override only counts if something was PLAYING at the time, or
+  picking a face during silence would mute the next track's arrival.
 - **RUN tools/check_faces.py after adding a face.** Adding `nowplaying` and
   `gauges` to the device registry and forgetting the bridge's table cost a flash
   cycle: the picker showed 27 faces and neither new one could be selected. The

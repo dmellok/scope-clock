@@ -149,7 +149,10 @@ footer a:hover{text-decoration:underline}
 <section class="span2">
   <h2><svg class="i"><use href="#i-clock"/></svg>Face</h2>
   <div id="faces" class="fam"></div>
-  <div class="row" style="margin-top:14px">
+  <div class="row" style="margin-top:12px">
+    <label class="mini"><input type="checkbox" id="autonp">show now-playing when music starts</label>
+  </div>
+  <div class="row" style="margin-top:10px">
     <label class="mini" style="flex:1;gap:9px">size
       <input type="range" id="fscale" min="40" max="250" step="5" style="flex:1">
       <span id="fscaleval" style="min-width:3.2rem;text-align:right">--</span>
@@ -161,7 +164,9 @@ footer a:hover{text-decoration:underline}
     <b>Size</b> applies to the face showing now and is remembered per face, so a
     dense one and a sparse one can each be sized to the tube. You can also set it
     at the clock: <b>hold the knob's button</b> to enter size mode, turn to
-    adjust, tap to leave — it gives the knob back on its own after 8s.</p>
+    adjust, tap to leave — it gives the knob back on its own after 8s.<br>
+    Now-playing appears when a track starts or changes, never mid-song, and if
+    you pick another face it stays picked until the music stops.</p>
 </section>
 
 <section>
@@ -583,6 +588,7 @@ document.addEventListener("keydown",function(e){
 });
 reparse();
 el("b-relink").onclick=function(){post("/api/relink","1")};
+el("autonp").onchange=function(){post("/api/autonp",this.checked?"1":"0")};
 el("fscale").oninput=function(){el("fscaleval").textContent=this.value+"%"};
 el("fscale").onchange=function(){post("/api/scale",this.value)};
 el("bri").oninput=function(){el("brival").textContent=this.value};
@@ -605,6 +611,7 @@ function poll(){
     if(document.activeElement!==el("bri")){el("bri").value=s.bri;el("brival").textContent=s.bri}
     // Left alone while it is being dragged, and while the knob is mid-adjust the
     // device is the authority — this just follows it.
+    if(s.autonp!==undefined)el("autonp").checked=!!s.autonp;
     if(document.activeElement!==el("fscale")&&s.scale!==undefined){
       el("fscale").value=s.scale; el("fscaleval").textContent=s.scale+"%"}
     el("s-mode").textContent=mn;
