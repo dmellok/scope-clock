@@ -128,6 +128,10 @@ void poll(DeviceState& dev) {
     int f = ((int)dev.faceId + detents) % n;
     if (f < 0) f += n;
     dev.faceId = (uint8_t)f;
+    // The knob is the way out of anything the host has pushed. Without this a
+    // bad scene could only be cleared over the network, which is a poor place
+    // to leave a physical object with a physical control on it.
+    dev.mode = Mode::Face;
     hal::link::send(static_cast<uint8_t>(proto::Msg::EventEncoder),
                     reinterpret_cast<const uint8_t*>(&detents), 1);
   }

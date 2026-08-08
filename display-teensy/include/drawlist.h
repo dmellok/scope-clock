@@ -3,8 +3,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <stdint.h>
+struct ClockState;
 
-enum class ItemType : uint8_t { End, Text, Line, Circle };
+// Clock and Hand are the template primitives: they carry an intent rather than
+// a finished shape, and are resolved against the RTC every refresh by
+// expandTemplate() before anything is drawn.
+enum class ItemType : uint8_t { End, Text, Line, Circle, Clock, Hand };
 
 struct Item {
   ItemType type = ItemType::End;
@@ -29,7 +33,20 @@ struct DrawList {
   void circle(int cx, int cy, int r) {
     if (count < CAP) items[count++] = Item{ItemType::Circle, (int16_t)cx, (int16_t)cy, (int16_t)r, 0, 0, nullptr};
   }
+  // scale carries the hand source (0 sec, 1 min, 2 hour); x2/y2 are the radii.
+  void hand(int cx, int cy, int r0, int r1, int src) {
+    if (count < CAP) items[count++] = Item{ItemType::Hand, (int16_t)cx, (int16_t)cy, (int16_t)r0, (int16_t)r1, (int16_t)src, nullptr};
+  }
 };
+
+// Resolve a template in place: Clock items become Text with the RTC formatted
+// into `scratch`, Hand items become Line with endpoints from the current time.
+// Everything else is left alone, so a list with no template items is untouched.
+//
+// Done on a per-frame COPY of the retained list — the original keeps its format
+// strings, which live in the arena and must survive being rendered.
+void expandTemplate(DrawList& list, const ClockState& clk,
+                    char* scratch, uint16_t scratchCap);
 
 // Decode a PushList payload (see shared/protocol.h) into `out`, copying any
 // text into `arena` and pointing the items at it — Item holds a pointer, and

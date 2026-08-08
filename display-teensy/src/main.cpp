@@ -76,9 +76,17 @@ void loop() {
       vec::updateScreenSaver(clk.hour);
       faces::current(dev)(clk, frame);
       break;
-    case Mode::Pushed:
-      frame = dev.pushed;        // host-authored
+    case Mode::Pushed: {
+      // Copy, then resolve any template items against the RTC. The copy is what
+      // makes a template reusable: the retained list keeps its format strings,
+      // and this frame gets the rendered result. A pushed list with no template
+      // items simply passes through untouched.
+      frame = dev.pushed;
+      hal::rtc::read(clk);
+      static char scratch[128];
+      expandTemplate(frame, clk, scratch, sizeof scratch);
       break;
+    }
   }
   txt::centerLines(frame);       // 4. resolve text positions (no-op if placed)
   overlayBanner(dev, frame);     // 5. banner goes on top, already positioned

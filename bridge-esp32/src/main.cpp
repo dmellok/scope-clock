@@ -114,6 +114,22 @@ struct [[maybe_unused]] ListBuilder {
     buf[len++] = 0x03; put16(cx); put16(cy); put16(r);
     buf[0] = ++count;
   }
+  // Template primitives: resolved against the RTC on the device every refresh,
+  // so a face defined here keeps running with the bridge unplugged.
+  void clock(int16_t x, int16_t y, int16_t scale, const char* fmt) {
+    uint8_t sl = 0; while (fmt[sl]) ++sl;
+    if (!room((uint8_t)(8 + sl))) return;
+    buf[len++] = 0x04; put16(x); put16(y); put16(scale); buf[len++] = sl;
+    for (uint8_t i = 0; i < sl; ++i) buf[len++] = (uint8_t)fmt[i];
+    buf[0] = ++count;
+  }
+  void hand(int16_t cx, int16_t cy, int16_t r0, int16_t r1, uint8_t src) {
+    if (!room(10)) return;
+    buf[len++] = 0x05; put16(cx); put16(cy); put16(r0); put16(r1);
+    buf[len++] = src;
+    buf[0] = ++count;
+  }
+
   void send() const { sendFrame(proto::Msg::PushList, buf, len); }
 };
 
@@ -142,6 +158,11 @@ static String topic(const char* leaf) { return String(MQTT_PREFIX) + "/" + leaf;
 //   T <x> <y> <scale> <text to end of line>
 //   L <x0> <y0> <x1> <y1>
 //   C <cx> <cy> <r>
+//   D <x> <y> <scale> <strftime-ish format>     live from the RTC
+//   H <cx> <cy> <r0> <r1> <0|1|2>               hand: sec / min / hour
+//
+// D and H make the scene a face template: the device re-resolves them every
+// refresh, so it keeps telling the time even with the bridge gone.
 static void sceneLine(ListBuilder& b, const String& ln) {
   if (ln.length() < 3) return;
   const char kind = ln[0];
@@ -155,11 +176,19 @@ static void sceneLine(ListBuilder& b, const String& ln) {
     while (i < (int)ln.length() && isDigit(ln[i])) ++i;
     if (i == start) break;
     v[n++] = ln.substring(start, i).toInt();
-    if (kind == 'T' && n == 3) break;      // rest of the line is the string
+    if ((kind == 'T' || kind == 'D') && n == 3) break;  // rest is the string
   }
-  if (kind == 'T' && n >= 3) {
+  if ((kind == 'T' || kind == 'D') && n >= 3) {
     while (i < (int)ln.length() && ln[i] == ' ') ++i;
-    b.text((int16_t)v[0], (int16_t)v[1], (int16_t)v[2], ln.substring(i).c_str());
+    const String body = ln.substring(i);
+    if (kind == 'T') b.text ((int16_t)v[0], (int16_t)v[1], (int16_t)v[2], body.c_str());
+    else             b.clock((int16_t)v[0], (int16_t)v[1], (int16_t)v[2], body.c_str());
+  } else if (kind == 'H' && n >= 4) {
+    // the 5th field is the source; re-scan it since the loop caps at 4
+    int src = 0;
+    const int sp = ln.lastIndexOf(' ');
+    if (sp > 0) src = ln.substring(sp + 1).toInt();
+    b.hand((int16_t)v[0], (int16_t)v[1], (int16_t)v[2], (int16_t)v[3], (uint8_t)(src & 3));
   } else if (kind == 'L' && n >= 4) {
     b.line((int16_t)v[0], (int16_t)v[1], (int16_t)v[2], (int16_t)v[3]);
   } else if (kind == 'C' && n >= 3) {

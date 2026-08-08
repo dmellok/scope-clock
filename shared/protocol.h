@@ -73,6 +73,20 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 //                Text    0x01, x:i16, y:i16, scale:i16, len:u8, chars  (8+len)
 //                Line    0x02, x:i16, y:i16, x2:i16, y2:i16            (9)
 //                Circle  0x03, cx:i16, cy:i16, r:i16                   (7)
+//                Clock   0x04, x:i16, y:i16, scale:i16, len:u8, fmt    (8+len)
+//                Hand    0x05, cx:i16, cy:i16, r0:i16, r1:i16, src:u8  (10)
+//
+//              The last two are what make a pushed list a FACE TEMPLATE rather
+//              than a still image: they are re-evaluated against the RTC every
+//              refresh, so the host can define a whole working clock face
+//              without a firmware rebuild, and it keeps running with the host
+//              gone. No separate mode — a list is a template exactly when it
+//              contains one of them.
+//
+//                Clock fmt tokens: %H 24h  %I 12h  %M min  %S sec
+//                                  %d day  %m mon  %y year  %% literal
+//                Hand src: 0 = seconds, 1 = minutes, 2 = hours. Drawn from
+//                radius r0 to r1 about (cx,cy), 0 = north, clockwise.
 //              The tags match ItemType on the device. Text is NOT terminated
 //              on the wire — the device copies each string into its own arena
 //              and terminates it there, because Item holds a pointer and the
