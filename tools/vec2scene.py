@@ -16,7 +16,7 @@ thin rectangle — double the segments for a fatter, blurrier result — and the
 centre-line of a staircased diagonal simplifies to one clean diagonal, which is
 what the beam wants to draw anyway.
 
-The item budget is the real constraint: the device holds 128 and the simplifier
+The item budget is the real constraint: the device holds 192 and the simplifier
 is tightened automatically until the drawing fits.
 """
 import argparse
@@ -27,7 +27,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 FIELD = 1150          # half-width of the usable display area, in display units
-MAX_ITEMS = 128       # DrawList::CAP on the device
+MAX_ITEMS = 192       # DrawList::CAP on the device
 
 
 # ---------------------------------------------------------------- raster ----
@@ -152,6 +152,62 @@ def trace_centrelines(g):
     return polys
 
 
+def trace_outline(g):
+    """Lit cells -> the boundary of the lit region, as closed loops.
+
+    The other mode draws one thin line down the middle of each stroke. This one
+    draws round the edge of it, which reproduces the weight of the original art
+    — a two-cell-wide stroke comes out as two lines with a gap, exactly as the
+    source looks — at roughly double the segments.
+    """
+    gh, gw = g.shape
+
+    def lit(r, c):
+        return 0 <= r < gh and 0 <= c < gw and g[r, c]
+
+    # Edges between a lit cell and anything else, in CORNER coordinates.
+    edges = set()
+    for r in range(gh):
+        for c in range(gw):
+            if not g[r, c]:
+                continue
+            if not lit(r - 1, c): edges.add(((r, c), (r, c + 1)))
+            if not lit(r + 1, c): edges.add(((r + 1, c), (r + 1, c + 1)))
+            if not lit(r, c - 1): edges.add(((r, c), (r + 1, c)))
+            if not lit(r, c + 1): edges.add(((r, c + 1), (r + 1, c + 1)))
+
+    adj = {}
+    for a, b in edges:
+        adj.setdefault(a, []).append(b)
+        adj.setdefault(b, []).append(a)
+
+    unused = set(edges)
+    loops = []
+    while unused:
+        a, b = next(iter(unused))
+        unused.discard((a, b))
+        loop = [a, b]
+        cur, prev = b, a
+        while True:
+            nxt = None
+            for m in adj.get(cur, ()):
+                e = (cur, m) if (cur, m) in unused else ((m, cur) if (m, cur) in unused else None)
+                if e is None or m == prev:
+                    continue
+                nxt = m
+                unused.discard(e)
+                break
+            if nxt is None:
+                break
+            loop.append(nxt)
+            prev, cur = cur, nxt
+            if nxt == loop[0]:
+                break
+        if len(loop) > 2:
+            loops.append(loop)
+    return loops
+
+
 # ------------------------------------------------------------------- svg ----
 
 def svg_polys(path, steps=12):
@@ -272,6 +328,9 @@ def main():
     ap.add_argument("--threshold", type=int, default=90, help="raster: lit above this")
     ap.add_argument("--grid", type=int, default=0, help="raster: force grid width")
     ap.add_argument("--grid-h", type=int, default=0, help="raster: force grid height")
+    ap.add_argument("--outline", action="store_true",
+                    help="raster: trace stroke outlines (heavier, like the source) "
+                         "instead of centre-lines")
     ap.add_argument("--field", type=int, default=FIELD)
     ap.add_argument("--max-items", type=int, default=MAX_ITEMS)
     ap.add_argument("--preview", metavar="FILE.svg", help="write an SVG of the result")
@@ -284,7 +343,8 @@ def main():
     else:
         g = load_grid(args.input, args.threshold, args.grid, args.grid_h)
         sys.stderr.write("grid %dx%d\n" % (g.shape[1], g.shape[0]))
-        polys = [[(c, r) for r, c in p] for p in trace_centrelines(g)]
+        tracer = trace_outline if args.outline else trace_centrelines
+        polys = [[(c, r) for r, c in p] for p in tracer(g)]
 
     if not polys:
         sys.exit("nothing to draw")

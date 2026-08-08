@@ -20,9 +20,11 @@ struct Item {
 
 struct DrawList {
   // Curves need segments, and a Lissajous at 32 of them looks like a polygon.
-  // The wire format cannot reach this: MAX_PAYLOAD caps a pushed list at ~34
-  // items regardless, so this only buys headroom for locally generated faces.
-  static constexpr uint8_t CAP = 128;
+  // Traced artwork needs more again: the cat outline is 129 segments at full
+  // fidelity, and at CAP 128 the simplifier had to distort it to fit by one.
+  // Chunked push (PushBegin/Chunk/Commit) is what makes lists this big
+  // reachable over the wire at all.
+  static constexpr uint8_t CAP = 192;
   Item     items[CAP];
   uint8_t  count = 0;
 

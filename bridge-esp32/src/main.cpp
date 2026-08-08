@@ -108,6 +108,20 @@ static void cfgPanic() {
 #define TO_DISPLAY Serial
 
 static void sendFrame(proto::Msg id, const uint8_t* p, uint8_t len) {
+  // Wait for room rather than overrun the ring.
+  //
+  // The CDC TX ring is 256 bytes — setTxBufferSize cannot enlarge it, because
+  // ARDUINO_USB_CDC_ON_BOOT means the core has already created it before
+  // setup() runs — and it drains about one 64-byte packet per refresh, since
+  // the device re-queues its IN transfer once per frame. Write faster than
+  // that and the tail is silently discarded: the API reports success, the
+  // frame never arrives, and neither end sees an error. Small frames always
+  // fitted, which is why only artwork ever broke.
+  const int need = (int)len + 4;
+  for (uint32_t t0 = millis(); TO_DISPLAY.availableForWrite() < need; ) {
+    if (millis() - t0 > 400) break;   // give up rather than block the bridge
+    delay(2);
+  }
   TO_DISPLAY.write(proto::START);
   TO_DISPLAY.write((uint8_t)id);
   TO_DISPLAY.write(len);
@@ -199,7 +213,7 @@ struct [[maybe_unused]] ListBuilder {
 // device has not drained it yet the tail is dropped rather than queued, and the
 // frame simply never arrives. Every frame that had ever worked until now was
 // tiny, which is why this only showed up with artwork.
-constexpr uint8_t kChunk = 96;
+constexpr uint8_t kChunk = 48;
 
 static void sendStaged(const uint8_t* p, uint16_t len) {
   sendFrame(proto::Msg::PushBegin, nullptr, 0);
@@ -209,18 +223,19 @@ static void sendStaged(const uint8_t* p, uint16_t len) {
                     ? kChunk : (uint8_t)(len - at);
     sendFrame(proto::Msg::PushChunk, p + at, n);
     at += n;
-    delay(25);                       // ~1.5 refreshes; the device polls once a frame
+    // Below the drain rate: ~52 bytes a frame against the ~64 the device takes.
+    delay(30);
   }
   sendFrame(proto::Msg::PushCommit, nullptr, 0);
 }
 
 // Grows past MAX_PAYLOAD, so it is staged rather than sent in one frame.
 struct BigList {
-  uint8_t buf[1200];
+  uint8_t buf[2048];
   uint16_t len = 1;
   uint8_t  count = 0;
   BigList() { buf[0] = 0; }
-  bool room(uint16_t n) const { return len + n <= sizeof(buf) && count < 128; }
+  bool room(uint16_t n) const { return len + n <= sizeof(buf) && count < 192; }
   void put16(int16_t v) { buf[len++] = (uint8_t)(v & 0xFF); buf[len++] = (uint8_t)((v >> 8) & 0xFF); }
   void line(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
     if (!room(9)) return;
@@ -736,6 +751,7 @@ void loop() {
 
   mqttConnect();
   mqtt.loop();
+
 
   // Sync when the device asks, not merely when our own timer says so.
   //

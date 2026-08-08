@@ -39,11 +39,11 @@ void applyBanner(DeviceState& dev, const uint8_t* p, uint8_t len) {
 // DeviceState because it is protocol machinery, not something the renderer or
 // any face has any business seeing.
 //
-// 128 items of 9 bytes is the worst realistic case for line art, plus the
+// 192 items of 9 bytes is the worst realistic case for line art, plus the
 // count byte. A transfer that would overflow this is abandoned rather than
 // truncated: a half-decoded picture is worse than none, and Commit will find
 // the staged bytes malformed anyway.
-constexpr uint16_t kStageCap = 1200;
+constexpr uint16_t kStageCap = 2048;
 uint8_t  stage[kStageCap];
 uint16_t stageLen = 0;
 bool     stageOk  = false;      // false once a transfer has overflowed
