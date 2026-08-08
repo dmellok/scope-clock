@@ -113,6 +113,14 @@ clone it alongside.
   Same shape as the RTC: the host supplies truth, the device keeps time against
   it. `gauges` is deliberately generic — n labelled percentages and a footer,
   nothing about where they came from — so any topic can drive it.
+- **NO leading zeros in coordinate tables.** A tidily column-aligned `-060` is
+  octal 48, and `-0960` will not compile at all. Both happened while padding the
+  teapot's spout and handle to line up, and only the second was an error the
+  compiler could see.
+- **Judge a rotating face over a full turn, not one frame.** The teapot looked
+  like a stack of dashes at pitch 0 (the eye lies in the plane of every parallel,
+  so each ring collapses to a line) and lopsided with meridians over half a turn.
+  `scratchpad/hostsim/phases.cpp` renders quarter turns side by side.
 - **SVG import belongs in the browser, not the firmware.** The page already has
   a complete SVG engine: `getPointAtLength` flattens beziers, arcs and nested
   transforms exactly, where an ESP32 parsing path data by hand would get a dozen

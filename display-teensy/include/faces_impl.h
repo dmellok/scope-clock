@@ -45,6 +45,13 @@ void starpoly(const ClockState&, DrawList&);   // {n/k} star polygons
 void starfield(const ClockState&, DrawList&);
 void tunnel(const ClockState&, DrawList&);
 
+// --- wireframes (faces_wire.cpp) --------------------------------------------
+void teapot(const ClockState&, DrawList&);     // the Utah teapot, as a profile
+void sphere(const ClockState&, DrawList&);     // meridians and parallels
+void knot(const ClockState&, DrawList&);       // trefoil
+void mobius(const ClockState&, DrawList&);     // band with a half twist
+void helix(const ClockState&, DrawList&);      // twin helix and rungs
+
 // --- effects ----------------------------------------------------------------
 void matrix(const ClockState&, DrawList&);     // digital rain
 

@@ -457,6 +457,8 @@ static const FaceEntry kFaces[] = {
   {"midiscope","MIDI"}, {"midichord","MIDI"},
   {"matrix","Effects"},
   {"nowplaying","Data"}, {"gauges","Data"},
+  {"teapot","Wireframes"}, {"sphere","Wireframes"}, {"knot","Wireframes"},
+  {"mobius","Wireframes"}, {"helix","Wireframes"},
 };
 // Everything downstream still wants a plain name by index.
 static const char* faceName(uint8_t i) { return kFaces[i].name; }

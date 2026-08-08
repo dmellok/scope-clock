@@ -33,6 +33,8 @@ RenderFn kFaces[] = {
   matrix,
   // host-fed
   nowplaying, gauges,
+  // wireframes
+  teapot, sphere, knot, mobius, helix,
 };
 
 // Contiguous runs of kFaces above. Keep the two in step.
@@ -46,6 +48,7 @@ const Family kFamilies[] = {
   { 24, 2 },   // live:    MIDI scope figure, MIDI chord wheel
   { 26, 1 },   // effects: digital rain
   { 27, 2 },   // data:    now playing, gauges
+  { 29, 5 },   // wire:    teapot, sphere, knot, mobius, helix
 };
 constexpr uint8_t kFamilyCount = sizeof(kFamilies) / sizeof(kFamilies[0]);
 
