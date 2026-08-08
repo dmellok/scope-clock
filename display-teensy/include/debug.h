@@ -36,4 +36,7 @@ inline void resetCause() {
        (s1 & 0x04) ? " SW"     : "");
 }
 
+// Read-only probe of the built-in microSD socket. Blocking; console-driven.
+void probeSd();
+
 }  // namespace dbg

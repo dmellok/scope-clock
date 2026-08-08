@@ -95,6 +95,7 @@ void loop() {
     const int c = Serial.read();
     if (c >= '0' && c <= '3') { hal::audio::setVariant((uint8_t)(c - '0')); dev.mode = Mode::Audio; }
     else if (c == 'f')        { dev.mode = Mode::Face; }
+    else if (c == 's')        { dbg::probeSd(); }
   }
 
   hal::link::poll(dev, clk);     // 1. host commands in (non-blocking)

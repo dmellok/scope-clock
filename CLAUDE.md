@@ -93,6 +93,18 @@ clone it alongside.
       `begin()`, which would re-ramp and re-allocate the DMA channel.
     * 192kHz cannot come in this way: `usb_desc.c` hardcodes `tSamFreq 44100`
       with `bSamFreqType 1` and a 180-byte endpoint. That is the SD-card path.
+- **The microSD socket is EMPTY, and an empty socket hangs the board.**
+  `SD.begin(BUILTIN_SDCARD)` does not return false with no card — it spins in
+  SDIO init forever. Probed from the console ('s', see sdprobe.cpp); it never
+  reached "mounted" or "NO CARD". So the 192kHz path needs the clock opened once
+  to seat a card; there is nothing in there to read.
+  The probe now refuses to run until the watchdog is armed (20s uptime), which
+  turns that hang into a 2s reset instead of a dead clock needing a reflash.
+- **A hung Teensy is recoverable over USB — the physical button is not needed.**
+  `pio run -t upload` rebooted a fully hung board (the 134-baud reboot request
+  is handled in the USB ISR, which keeps running when the main loop does not).
+  Worth knowing against the OTA-rejection reasoning below: a *hang* is not the
+  same as a failed FlasherX leaving no valid application.
 - **Debug the Teensy over its own front-jack console, not through the bridge.**
   Reflashing drops the USB-host port and USBHost_t36 never re-claims it, so
   every experiment routed through the link costs a multi-minute recovery (or an
