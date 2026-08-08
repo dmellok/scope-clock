@@ -48,6 +48,10 @@ void tunnel(const ClockState&, DrawList&);
 // --- effects ----------------------------------------------------------------
 void matrix(const ClockState&, DrawList&);     // digital rain
 
+// --- host-fed (faces_now.cpp) -----------------------------------------------
+void nowplaying(const ClockState&, DrawList&); // track + progress ring
+void gauges(const ClockState&, DrawList&);     // labelled percentage rings
+
 // --- MIDI (faces_midi.cpp) --------------------------------------------------
 void midiscope(const ClockState&, DrawList&);  // the interval as an X-Y figure
 void midichord(const ClockState&, DrawList&);  // the chord as a shape on a wheel

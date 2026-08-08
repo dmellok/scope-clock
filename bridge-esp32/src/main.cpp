@@ -8,6 +8,7 @@
 #include <WebServer.h>
 #include <Preferences.h>
 #include <time.h>
+#include <math.h>
 #include "protocol.h"     // shared/
 #include "webui.h"
 #include "soc/usb_serial_jtag_struct.h"
@@ -62,6 +63,7 @@ static WebServer   web(80);
 static struct Cfg {
   String wifiSsid, wifiPass, tz, ntp;
   String mqttHost, mqttPort, mqttUser, mqttPass, mqttPrefix;
+  String npTopic, gaugeTopic;      // arbitrary topics feeding the data faces
 } cfg;
 
 static bool cfgOverridden = false;   // any value came from NVS rather than .env
@@ -83,6 +85,8 @@ static void cfgLoad() {
   cfg.mqttUser   = cfgGet("mq_user",    MQTT_USER);
   cfg.mqttPass   = cfgGet("mq_pass",    MQTT_PASS);
   cfg.mqttPrefix = cfgGet("mq_prefix",  MQTT_PREFIX);
+  cfg.npTopic    = cfgGet("np_topic",   "straybot/playing");
+  cfg.gaugeTopic = cfgGet("gg_topic",   "claude/usage");
   prefs.end();
 }
 
@@ -187,8 +191,80 @@ static String jsonField(const String& src, const char* key) {
     return out;
   }
   int e = i;
-  while (e < (int)src.length() && (isDigit(src[e]) || src[e] == '-')) ++e;
+  // '.' included: extra_usage.utilization arrives as 0.314…, and stopping at
+  // the point would read it as 0 and throw the fraction away.
+  while (e < (int)src.length() && (isDigit(src[e]) || src[e] == '-' || src[e] == '.')) ++e;
   return src.substring(i, e);
+}
+
+// The value of a nested object, by brace matching, so "utilization" can be
+// looked up inside "five_hour" without colliding with the other two.
+static String jsonObject(const String& src, const char* key) {
+  const String pat = String("\"") + key + "\"";
+  const int k = src.indexOf(pat);
+  if (k < 0) return String();
+  const int open = src.indexOf('{', k);
+  if (open < 0) return String();
+  int depth = 0;
+  for (int i = open; i < (int)src.length(); ++i) {
+    if (src[i] == '{') ++depth;
+    else if (src[i] == '}' && --depth == 0) return src.substring(open, i + 1);
+  }
+  return String();
+}
+
+// Seconds from now until an ISO-8601 instant, or -1 if it cannot be read.
+// Written out rather than handed to mktime because the timestamp is UTC and the
+// bridge's TZ is deliberately local — mktime would silently apply the offset.
+static long secondsUntilIso(const String& iso) {
+  int Y, Mo, D, H, Mi, S;
+  if (sscanf(iso.c_str(), "%d-%d-%dT%d:%d:%d", &Y, &Mo, &D, &H, &Mi, &S) != 6) return -1;
+  // Days from civil (Howard Hinnant's algorithm), which is exact and has no
+  // lookup tables or leap-year special cases to get wrong.
+  int y = Y; const int m = Mo;
+  y -= m <= 2;
+  const int era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = (unsigned)(y - era * 400);
+  const unsigned doy = (unsigned)((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + D - 1);
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  const long days = (long)era * 146097 + (long)doe - 719468;
+  const long epoch = days * 86400L + H * 3600L + Mi * 60L + S;
+  const time_t now = time(nullptr);
+  if (now < 1000000000L) return -1;            // clock not set yet
+  return epoch - (long)now;
+}
+
+static void sendNowPlaying(bool playing, uint16_t durS, uint16_t progS,
+                           const String& title, const String& artist,
+                           const String& album) {
+  uint8_t p[proto::MAX_PAYLOAD];
+  p[0] = playing ? 1 : 0;
+  p[1] = (uint8_t)(durS & 0xFF);  p[2] = (uint8_t)(durS >> 8);
+  p[3] = (uint8_t)(progS & 0xFF); p[4] = (uint8_t)(progS >> 8);
+  const uint8_t tl = (uint8_t)(title.length()  > 47 ? 47 : title.length());
+  const uint8_t al = (uint8_t)(artist.length() > 39 ? 39 : artist.length());
+  p[5] = tl; p[6] = al;
+  uint16_t n = 7;
+  for (uint8_t i = 0; i < tl; ++i) p[n++] = (uint8_t)title[i];
+  for (uint8_t i = 0; i < al; ++i) p[n++] = (uint8_t)artist[i];
+  for (uint16_t i = 0; i < album.length() && n < proto::MAX_PAYLOAD; ++i)
+    p[n++] = (uint8_t)album[i];
+  sendFrame(proto::Msg::SetNowPlaying, p, (uint8_t)n);
+}
+
+static void sendGauges(const uint8_t* pct, const char* const* labels, uint8_t n,
+                       const String& footer) {
+  uint8_t p[proto::MAX_PAYLOAD];
+  p[0] = n;
+  uint16_t at = 1;
+  for (uint8_t i = 0; i < n; ++i) {
+    const uint8_t ll = (uint8_t)strlen(labels[i]);
+    p[at++] = pct[i]; p[at++] = ll;
+    for (uint8_t j = 0; j < ll; ++j) p[at++] = (uint8_t)labels[i][j];
+  }
+  for (uint16_t i = 0; i < footer.length() && at < proto::MAX_PAYLOAD; ++i)
+    p[at++] = (uint8_t)footer[i];
+  sendFrame(proto::Msg::SetGauges, p, (uint8_t)at);
 }
 
 // Accepts either the JSON that HA sends or a bare line of text, so the topic is
@@ -380,6 +456,7 @@ static const FaceEntry kFaces[] = {
   {"starfield","Motion"}, {"tunnel","Motion"},
   {"midiscope","MIDI"}, {"midichord","MIDI"},
   {"matrix","Effects"},
+  {"nowplaying","Data"}, {"gauges","Data"},
 };
 // Everything downstream still wants a plain name by index.
 static const char* faceName(uint8_t i) { return kFaces[i].name; }
@@ -418,6 +495,15 @@ static void scaleSaveTick() {
 
 // The whole table in one frame: 27 faces plus a count is well inside a payload,
 // and sending it whole means there is no partial state to reason about.
+// Located by name, so appending or reordering faces cannot silently point this
+// at the wrong one.
+static uint8_t npFace() {
+  for (uint8_t i = 0; i < kFaceCount; ++i)
+    if (!strcmp(kFaces[i].name, "nowplaying")) return i;
+  return kFaceCount;
+}
+static bool autoNowPlaying = true;
+
 static void sendScales() {
   uint8_t p[proto::MAX_PAYLOAD];
   const uint8_t n = kFaceCount < 32 ? kFaceCount : 32;
@@ -488,7 +574,50 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
   for (unsigned i = 0; i < len; ++i) msg += (char)payload[i];
   const String tp(t);
 
-  if (tp == topic("notify/set")) {
+  if (tp == cfg.npTopic) {
+    // Spotify-shaped: name / album / artist / is_playing / duration_ms /
+    // progress_ms. Sent on change only — the device runs the progress ring
+    // itself, so a track update is a few hundred bytes a song, not per second.
+    const bool playing = msg.indexOf("\"is_playing\":true") >= 0
+                      || msg.indexOf("\"is_playing\": true") >= 0;
+    const long dur  = jsonField(msg, "duration_ms").toInt();
+    const long prog = jsonField(msg, "progress_ms").toInt();
+    sendNowPlaying(playing, (uint16_t)(dur / 1000), (uint16_t)(prog / 1000),
+                   jsonField(msg, "name"), jsonField(msg, "artist"),
+                   jsonField(msg, "album"));
+    if (autoNowPlaying && playing && npFace() < kFaceCount) {
+      // Only takes the screen from a local face. Something deliberately pushed
+      // stays put — a scene is a decision somebody made more recently.
+      if (!haveStatus || lastStatus.mode == 0) { curFace = npFace(); sendSetMode(0, curFace); }
+    }
+  } else if (tp == cfg.gaugeTopic) {
+    // Three utilisation figures, each in its own nested object, plus a countdown
+    // to whichever window resets first.
+    const String h5 = jsonObject(msg, "five_hour");
+    const String d7 = jsonObject(msg, "seven_day");
+    const String ex = jsonObject(msg, "extra_usage");
+    auto pctOf = [](const String& o) -> uint8_t {
+      const float v = jsonField(o, "utilization").toFloat();
+      const long r = lroundf(v < 0 ? 0 : (v > 100 ? 100 : v));
+      return (uint8_t)r;
+    };
+    const uint8_t pct[3] = { pctOf(h5), pctOf(d7), pctOf(ex) };
+    static const char* const labels[3] = { "5H", "7D", "EXTRA" };
+
+    String footer;
+    const long secs = secondsUntilIso(jsonField(h5, "resets_at"));
+    if (secs > 0) {
+      const long m = secs / 60;
+      footer = m >= 60 ? String("5H RESETS IN ") + (m / 60) + "h" + (m % 60) + "m"
+                       : String("5H RESETS IN ") + m + "m";
+    }
+    const long used = jsonField(ex, "used_credits").toInt();
+    if (used > 0) {
+      if (footer.length()) footer += "  ";
+      footer += String(used) + " CR";
+    }
+    sendGauges(pct, labels, 3, footer);
+  } else if (tp == topic("notify/set")) {
     applyNotify(msg, bannerMs);
   } else if (tp == topic("banner/set")) {
     sendBanner(msg.c_str(), bannerMs);
@@ -641,6 +770,8 @@ static void mqttConnect() {
   publishDiscovery();
   publishState();
   statusFresh = true;                 // republish everything on this connection
+  if (cfg.npTopic.length())    mqtt.subscribe(cfg.npTopic.c_str());
+  if (cfg.gaugeTopic.length()) mqtt.subscribe(cfg.gaugeTopic.c_str());
   mqtt.subscribe(topic("notify/set").c_str());
   mqtt.subscribe(topic("banner/set").c_str());
   mqtt.subscribe(topic("banner/duration").c_str());
@@ -935,6 +1066,9 @@ static void handleRoot() {
      + field("Username", "mq_user", cfg.mqttUser, false)
      + field("Password", "mq_pass", "", true)
      + field("Topic prefix", "mq_prefix", cfg.mqttPrefix, false) + "</fieldset>";
+  h += "<fieldset><legend>Data faces</legend>"
+     + field("Now-playing topic", "np_topic", cfg.npTopic, false)
+     + field("Gauges topic", "gg_topic", cfg.gaugeTopic, false) + "</fieldset>";
   h += "<button>Save and reboot</button></form>"
        "<div class=foot><a href=/>\xe2\x86\x90 Back to the clock</a>"
        "<a href=/forget onclick=\"return confirm('Revert to the built-in settings?')\">"
@@ -945,7 +1079,8 @@ static void handleRoot() {
 static void handleSave() {
   if (!webAuthed()) return;
   prefs.begin("scopeclock", false);
-  static const char* keys[] = {"wifi_ssid","tz","ntp","mq_host","mq_port","mq_user","mq_prefix"};
+  static const char* keys[] = {"wifi_ssid","tz","ntp","mq_host","mq_port","mq_user","mq_prefix",
+                               "np_topic","gg_topic"};
   for (const char* k : keys) if (web.hasArg(k)) prefs.putString(k, web.arg(k));
   // Secrets only when actually supplied, so a blank field is "keep".
   if (web.hasArg("wifi_pass") && web.arg("wifi_pass").length()) prefs.putString("wifi_pass", web.arg("wifi_pass"));

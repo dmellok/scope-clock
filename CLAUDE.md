@@ -107,6 +107,16 @@ clone it alongside.
   is handled in the USB ISR, which keeps running when the main loop does not).
   Worth knowing against the OTA-rejection reasoning below: a *hang* is not the
   same as a failed FlasherX leaving no valid application.
+- **Host-fed faces advance themselves.** `nowplaying` gets a track when the
+  track CHANGES and runs the progress ring off millis() in between, so a song is
+  a few hundred bytes rather than an update a second down a link that wedges.
+  Same shape as the RTC: the host supplies truth, the device keeps time against
+  it. `gauges` is deliberately generic — n labelled percentages and a footer,
+  nothing about where they came from — so any topic can drive it.
+- **RUN tools/check_faces.py after adding a face.** Adding `nowplaying` and
+  `gauges` to the device registry and forgetting the bridge's table cost a flash
+  cycle: the picker showed 27 faces and neither new one could be selected. The
+  checker names it in one line and needs no hardware.
 - **Device units are NOT DAC counts, and the tube's radius is ~1800.** Measured,
   not assumed: push concentric rings (`C 0 0 600` … `C 0 0 1800`) and look. Every
   face here is authored against a 1200-unit working edge, so `vec::` scales by

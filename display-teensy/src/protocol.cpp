@@ -5,6 +5,8 @@
 #include "drawlist.h"
 #include "hal/rtc.h"
 #include "hal/link.h"
+#include "nowplaying.h"
+#include "gauges.h"
 #include <Arduino.h>
 
 namespace {
@@ -164,6 +166,14 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
 
     case proto::Msg::Notify:
       applyNotify(dev, payload, len);
+      break;
+
+    case proto::Msg::SetNowPlaying:
+      np::set(payload, len);
+      break;
+
+    case proto::Msg::SetGauges:
+      gauge::set(payload, len);
       break;
 
     case proto::Msg::SetScales: {

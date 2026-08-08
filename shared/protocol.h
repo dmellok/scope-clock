@@ -26,6 +26,8 @@ enum class Msg : uint8_t {
   PushCommit     = 0x0A,   // decode what was staged and show it
   Notify         = 0x0B,   // title + body overlay, placed, auto-expiring
   SetScales      = 0x0C,   // per-face render scale, percent, one byte each
+  SetNowPlaying  = 0x0D,   // current track, for the nowplaying face
+  SetGauges      = 0x0E,   // labelled percentages, for the gauges face
   // device -> host
   Hello          = 0x81,   // fw version, caps, panel size
   Pong           = 0x82,
@@ -106,6 +108,13 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 //                device can apply it without a round trip when the knob
 //                selects a face.
 // EventScale   [faceId:u8][pct:u8]   the knob changed a scale; save it.
+// SetNowPlaying [flags:u8][durS:u16][progS:u16][titleLen:u8][artistLen:u8]
+//                [title][artist][album]   flags bit0 = playing.
+//                Sent when the track CHANGES, not per second: the device
+//                advances the progress ring itself between messages.
+// SetGauges    [n:u8] then n x [pct:u8][labelLen:u8][label], then a footer
+//                string to the end. Nothing in it says where the numbers
+//                came from, so any source can drive it.
 // Notify       [ms:u16][place:u8][titleLen:u8][title][body]
 //                place: low bits 0 bottom strip, 1 top strip, 2 centred card;
 //                bit 0x80 = solo, i.e. blank the face behind it.
