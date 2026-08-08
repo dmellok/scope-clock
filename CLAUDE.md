@@ -113,6 +113,14 @@ clone it alongside.
   Same shape as the RTC: the host supplies truth, the device keeps time against
   it. `gauges` is deliberately generic — n labelled percentages and a footer,
   nothing about where they came from — so any topic can drive it.
+- **SVG import belongs in the browser, not the firmware.** The page already has
+  a complete SVG engine: `getPointAtLength` flattens beziers, arcs and nested
+  transforms exactly, where an ESP32 parsing path data by hand would get a dozen
+  cases wrong. The device only ever receives straight lines. The 192-item cap is
+  the real constraint, so outlines are Douglas-Peucker simplified with the
+  tolerance BINARY-SEARCHED rather than guessed — the value that fits depends
+  entirely on the drawing. `tools/vec2scene.py` still exists for rasters and for
+  scripting; this is the same job for a file you have to hand.
 - **Auto-showing a face must be edge-triggered and overridable.** The first
   now-playing version switched whenever a track message arrived and the device
   was on a local face, so every update yanked the screen back and navigating

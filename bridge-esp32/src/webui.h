@@ -227,6 +227,8 @@ footer a:hover{text-decoration:underline}
         <button id="b-del">Delete</button>
         <button id="b-wipe">Clear all</button>
         <button id="b-live">Live</button>
+        <button id="b-svg">Import SVG</button>
+        <input type="file" id="svgfile" accept=".svg,image/svg+xml" style="display:none">
       </div>
       <svg id="cv" viewBox="-1330 -1330 2660 2660"></svg>
       <div class="meta"><span id="xy">&mdash;</span><span id="livestat"></span><span id="cnt">0 items</span></div>
@@ -245,7 +247,9 @@ D -430 -1215 9 %H:%M:%S"></textarea>
     hands; click to place text. With <b>Select</b>, drag an item to move it or
     grab a white handle to reshape it — line ends, circle and hand radii, and the
     right edge of a text box sets its scale. <b>Live</b> mirrors every edit
-    straight onto the tube.<br>
+    straight onto the tube. <b>Import SVG</b> flattens a drawing to lines in the
+    browser and fits it to the tube, simplifying until it fits the device's
+    192-item list.<br>
     <code>L</code> line · <code>C</code> circle · <code>T</code> text ·
     <code>D</code> live clock text · <code>H</code> hand (sec/min/hour).
     <code>D</code> and <code>H</code> make it a face template: the device re-renders
@@ -324,6 +328,104 @@ el("b-send").onclick=function(){
 el("b-nclear").onclick=function(){post("/api/notify","{\"message\":\"\",\"ms\":0}")};
 el("b-push").onclick=function(){post("/api/scene",el("scene").value)};
 el("b-clear").onclick=function(){post("/api/scene","")};
+
+/* ---- SVG import ---------------------------------------------------------
+   Done in the browser, not the firmware, and not because it is easier: the page
+   already has a complete SVG engine. getPointAtLength flattens beziers, arcs and
+   every nested transform exactly, which an ESP32 parsing path data by hand would
+   get wrong in a dozen ways. The device only ever sees straight lines.
+
+   The item cap is the real constraint — 192 lines for the whole scene — so the
+   flattened outlines are simplified with Douglas-Peucker, and the tolerance is
+   searched for rather than guessed, since the right value depends entirely on
+   the drawing. */
+function svgPolylines(text){
+  var doc = new DOMParser().parseFromString(text, "image/svg+xml");
+  var svg = doc.documentElement;
+  if(!svg || svg.tagName.toLowerCase()!=="svg") throw new Error("not an SVG");
+  // Measuring needs the element laid out, and a fixed viewport makes getCTM
+  // resolve the viewBox to a consistent space whatever the file declares.
+  var host=document.createElement("div");
+  host.style.cssText="position:absolute;left:-99999px;top:0;overflow:hidden";
+  document.body.appendChild(host);
+  svg.setAttribute("width","1000"); svg.setAttribute("height","1000");
+  host.appendChild(svg);
+  var out=[];
+  try{
+    var els=svg.querySelectorAll("path,line,polyline,polygon,rect,circle,ellipse");
+    for(var i=0;i<els.length;i++){
+      var el=els[i];
+      if(typeof el.getTotalLength!=="function") continue;
+      var len=0; try{ len=el.getTotalLength(); }catch(e){ continue; }
+      if(!(len>0)) continue;
+      // Two user units a sample: finer than the beam resolves once the drawing
+      // is fitted to the tube, and the simplifier removes what is redundant.
+      var n=Math.max(2,Math.min(600,Math.round(len/2)));
+      var m=el.getCTM(), pts=[];
+      for(var k=0;k<=n;k++){
+        var p=el.getPointAtLength(len*k/n);
+        pts.push(m?{x:m.a*p.x+m.c*p.y+m.e, y:m.b*p.x+m.d*p.y+m.f}:{x:p.x,y:p.y});
+      }
+      out.push(pts);
+    }
+  } finally { host.remove(); }
+  return out;
+}
+
+function dpSimplify(pts,eps){
+  if(pts.length<3) return pts.slice();
+  var keep=new Array(pts.length); keep[0]=keep[pts.length-1]=true;
+  var stack=[[0,pts.length-1]];
+  while(stack.length){
+    var seg=stack.pop(), a=seg[0], b=seg[1];
+    var ax=pts[a].x, ay=pts[a].y, bx=pts[b].x, by=pts[b].y;
+    var dx=bx-ax, dy=by-ay, dd=dx*dx+dy*dy, best=-1, bi=-1;
+    for(var i=a+1;i<b;i++){
+      var t=dd?((pts[i].x-ax)*dx+(pts[i].y-ay)*dy)/dd:0;
+      t=t<0?0:(t>1?1:t);
+      var qx=ax+t*dx-pts[i].x, qy=ay+t*dy-pts[i].y, d=qx*qx+qy*qy;
+      if(d>best){best=d;bi=i}
+    }
+    if(best>eps*eps){ keep[bi]=true; stack.push([a,bi],[bi,b]); }
+  }
+  var o=[]; for(var i=0;i<pts.length;i++) if(keep[i]) o.push(pts[i]);
+  return o;
+}
+
+function segCount(ps){var n=0;for(var i=0;i<ps.length;i++)n+=ps[i].length-1;return n}
+
+function svgToItems(text,budget){
+  var polys=svgPolylines(text);
+  if(!polys.length) throw new Error("no drawable geometry in that file");
+  // Fit to the tube: bounding box of everything, uniform scale, centred, and
+  // Y flipped because SVG counts downward and the device counts up.
+  var mnx=1e9,mxx=-1e9,mny=1e9,mxy=-1e9;
+  polys.forEach(function(p){p.forEach(function(q){
+    if(q.x<mnx)mnx=q.x; if(q.x>mxx)mxx=q.x;
+    if(q.y<mny)mny=q.y; if(q.y>mxy)mxy=q.y;})});
+  var w=mxx-mnx, h=mxy-mny, span=Math.max(w,h)||1;
+  var k=(2*EDGE*0.92)/span, cx=(mnx+mxx)/2, cy=(mny+mxy)/2;
+  polys=polys.map(function(p){return p.map(function(q){
+    return {x:(q.x-cx)*k, y:-(q.y-cy)*k}})});
+
+  // Binary search the tolerance: the value that fits depends on the drawing,
+  // and guessing it either mangles simple art or overflows on complex art.
+  var lo=0, hi=2*EDGE, simp=polys;
+  if(segCount(polys)>budget){
+    for(var it=0; it<24; it++){
+      var mid=(lo+hi)/2;
+      var t=polys.map(function(p){return dpSimplify(p,mid)});
+      if(segCount(t)>budget) lo=mid; else { hi=mid; simp=t; }
+    }
+  }
+  var items=[];
+  simp.forEach(function(p){
+    for(var i=1;i<p.length;i++)
+      items.push({k:"L",x0:Math.round(p[i-1].x),y0:Math.round(p[i-1].y),
+                       x1:Math.round(p[i].x),  y1:Math.round(p[i].y)});
+  });
+  return items;
+}
 
 /* ---- scene builder ------------------------------------------------------
    The text is the canonical scene; the canvas is a view over it, so anything
@@ -497,6 +599,22 @@ function pump(){
   });
 }
 el("b-live").onclick=function(){setLive(!live)};
+el("b-svg").onclick=function(){el("svgfile").click()};
+el("svgfile").onchange=function(){
+  var f=this.files&&this.files[0]; if(!f)return;
+  var r=new FileReader();
+  r.onload=function(){
+    try{
+      // Leave a little of the cap spare so a clock or a caption can still be
+      // added to the drawing afterwards.
+      items=svgToItems(r.result, CAP-8);
+      sel=-1; sync();
+      el("livestat").textContent=items.length+" lines from "+f.name;
+    }catch(e){ el("livestat").textContent="SVG: "+e.message; }
+  };
+  r.readAsText(f);
+  this.value="";
+};
 
 function sync(push){el("scene").value=ser();draw();if(push!==false)schedule()}
 function reparse(){items=parse(el("scene").value);sel=-1;draw()}
