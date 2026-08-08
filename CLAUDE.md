@@ -73,6 +73,35 @@ clone it alongside.
   note. Also: path length scales with cycle count, so dense figures must be
   drawn *smaller* or they blow the frame (a semitone cluster is 16:15 and wants
   37ms of a 16.7ms frame at full size).
+- **USB audio in is HALF DONE and off by default.** `hal/audio.h` +
+  `audio_usb.cpp` hand both DACs to the Audio library's DMA so a stereo pair
+  drives X/Y directly. It genuinely draws — a circle and a 3:2 figure rendered
+  from the Mac at 44.1kHz — but the Teensy still watchdog-resets when the host
+  *tears down* the audio stream, so there is no button for it in the web UI.
+  Enter it with `2` on the front-jack serial console, leave with `f`. What is
+  already established, so it need not be re-bisected:
+    * `AudioMemory(12)` starves the moment audio actually streams — both USB
+      directions allocate. 40 blocks is what made the first stream work at all.
+    * `AudioAnalyzePeak` hangs the chip within ~2s when read from the loop; the
+      identical graph left unread runs forever. Replaced with `PeakTap`, ~25
+      lines, integers only. Do not put the library analyzer back.
+    * `AudioOutputAnalogStereo`'s *constructor* calls `begin()`, which seizes
+      both DACs and blocks ~257ms in a DC ramp — hence placement-new on first
+      use, never a global. `begin()` also leaves the DAC reference at 1.2V;
+      `analogReference(EXTERNAL)` restores the 3.3V the geometry assumes.
+    * Stop by clearing `PDB0_SC` (the DMA's trigger), not by re-running
+      `begin()`, which would re-ramp and re-allocate the DMA channel.
+    * 192kHz cannot come in this way: `usb_desc.c` hardcodes `tSamFreq 44100`
+      with `bSamFreqType 1` and a 180-byte endpoint. That is the SD-card path.
+- **Debug the Teensy over its own front-jack console, not through the bridge.**
+  Reflashing drops the USB-host port and USBHost_t36 never re-claims it, so
+  every experiment routed through the link costs a multi-minute recovery (or an
+  `/api/relink`). `include/debug.h` prints are gated on `availableForWrite()`,
+  and `dbg::resetCause()` decodes RCM_SRS0/1 at boot — a Teensy hard fault does
+  not reset the chip, it hangs, and our own watchdog turns that into a reset
+  2s later, so "it rebooted" and "it faulted" are indistinguishable without it.
+  Note the console cannot keep up with a fast loop: gate traces to ~1Hz, or
+  longer strings get dropped by the buffer and absence proves nothing.
 - **Never call `USBSerialBase::begin()`** — it spins up to 5s and `yield()` does
   not run the render loop, so the CRT freezes on a static image. Enumeration
   already sets line coding and DTR/RTS. `USBSerialBase::write()` also spins

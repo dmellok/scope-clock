@@ -588,7 +588,8 @@ static void publishStatus(const proto::StatusPayload& s) {
   if (first || s.rtcOk != prev.rtcOk)
     mqtt.publish(topic("rtc/state").c_str(), s.rtcOk ? "ON" : "OFF", true);
   if (first || s.mode != prev.mode)
-    mqtt.publish(topic("mode/state").c_str(), s.mode ? "pushed" : "face", true);
+    mqtt.publish(topic("mode/state").c_str(),
+                 s.mode == 2 ? "audio" : (s.mode == 1 ? "pushed" : "face"), true);
 
   // These move constantly, so rate-limit rather than change-detect.
   static uint32_t lastSlow = 0;
@@ -716,6 +717,11 @@ static void handleApi() {
     sendBanner(body.c_str(), bannerMs);
   } else if (uri.endsWith("/scene")) {
     pushScene(body);
+  } else if (uri.endsWith("/audio")) {
+    // Mode 2 hands the clock's DACs to the USB audio stream on its front jack.
+    // "off" is just the local face again — there is no separate teardown.
+    const bool on = !(body == "0" || body.equalsIgnoreCase("off"));
+    sendSetMode(on ? 2 : 0, curFace);
   } else if (uri.endsWith("/relink")) {
     usbPeripheralReset();
   }
@@ -888,6 +894,7 @@ void loop() {
     web.on("/api/brightness", HTTP_POST, handleApi);
     web.on("/api/banner", HTTP_POST, handleApi);
     web.on("/api/scene", HTTP_POST, handleApi);
+    web.on("/api/audio", HTTP_POST, handleApi);
     web.on("/api/relink", HTTP_POST, handleApi);
     web.on("/config", HTTP_GET, handleRoot);
     web.on("/save", HTTP_POST, handleSave);

@@ -17,7 +17,10 @@ struct ClockState {
   bool     everSet  = false;
 };
 
-enum class Mode : uint8_t { Face, Pushed };
+// Audio is the odd one out: the draw list is not in its path at all, the DACs
+// belong to the audio DMA, and the beam is lit continuously rather than per
+// stroke. See hal/audio.h.
+enum class Mode : uint8_t { Face, Pushed, Audio };
 
 struct DeviceState {
   Mode      mode = Mode::Face;

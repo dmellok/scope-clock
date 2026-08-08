@@ -141,6 +141,7 @@ fetch("/api/faces").then(function(r){return r.json()}).then(function(a){
   poll();
 });
 function face(f){post("/api/face",f)}
+function audio(on){post("/api/audio",on?"1":"0")}
 function banner(){var m=el("bmsg").value.trim();if(m)post("/api/banner",m)}
 function scene(){post("/api/scene",el("scene").value)}
 function clearScene(){post("/api/scene","")}
@@ -149,10 +150,11 @@ el("bri").onchange=function(){post("/api/brightness",this.value)};
 
 function poll(){
   fetch("/api/state").then(function(r){return r.json()}).then(function(s){
-    el("sub").textContent=s.face+" · "+(s.mode?"pushed scene":"local face");
+    var mn=s.mode==2?"audio in":(s.mode==1?"pushed scene":"local face");
+    el("sub").textContent=s.face+" \u00b7 "+mn;
     FACES.forEach(function(f){var b=el("f-"+f);if(b)b.className=(f==s.face)?"on":""});
     if(document.activeElement!==el("bri")){el("bri").value=s.bri;el("brival").textContent=s.bri}
-    el("s-mode").textContent=s.mode?"pushed":"face";
+    el("s-mode").textContent=mn;
     var pct=s.hz?Math.round(s.frame*s.hz/10000):0;
     el("s-frame").innerHTML=s.hz+"Hz · "+(s.frame/1000).toFixed(1)+"ms ("+pct+"%)"+
       (pct>100?' <span class="warn">over budget</span>':"");

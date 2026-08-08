@@ -68,7 +68,8 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 // ---------------------------------------------------------------------------
 // Payload layouts. All multi-byte fields are little-endian.
 //
-// SetMode      [mode:u8][faceId:u8]
+// SetMode      [mode:u8][faceId:u8]   mode 0 local face, 1 pushed list,
+//                                    2 audio (stereo drives X/Y; see hal/audio.h)
 //              mode 0 = render a local face (faceId selects it)
 //              mode 1 = render the retained pushed list
 //

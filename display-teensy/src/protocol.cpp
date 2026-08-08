@@ -80,7 +80,14 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
 
     case proto::Msg::SetMode:
       if (len < 1) break;
-      dev.mode = payload[0] ? Mode::Pushed : Mode::Face;
+      // Anything unrecognised falls back to the local face rather than being
+      // ignored: a host that means "stop whatever you are doing" should always
+      // get a clock, never a stuck mode.
+      switch (payload[0]) {
+        case 1:  dev.mode = Mode::Pushed; break;
+        case 2:  dev.mode = Mode::Audio;  break;
+        default: dev.mode = Mode::Face;   break;
+      }
       if (len >= 2) dev.faceId = payload[1];
       break;
 
