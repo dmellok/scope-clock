@@ -1389,6 +1389,10 @@ static void handleState() {
   j += "\"elem\":" + String(atomZ) + ",";
   j += "\"font\":" + String(fontId) + ",";
   j += "\"con\":" + String(conId) + ",";
+  // Whether the ESP32's own USB device peripheral believes a host has
+  // enumerated it. False means nothing upstream is talking USB to us at
+  // all — which is what a charger, or an unplugged rear jack, looks like.
+  j += String("\"usb\":") + (TO_DISPLAY ? 1 : 0) + ",";
   j += "\"alx\":" + String(alignX) + ",";
   j += "\"aly\":" + String(alignY) + ",";
   // The bridge's own UTC offset, which is what every zone delta is measured
@@ -1858,10 +1862,22 @@ void loop() {
   // port was up at some point since ITS boot, so a device reflashed while the
   // port never re-claimed will sit there forever. Two one-shots facing each
   // other is a dead end, and it is the state a Teensy reflash lands in.
+  // It BACKS OFF, and it gives up. A fixed 30s retry was worse than one shot:
+  // resetting the peripheral yanks the USB device away from the far side, and
+  // if that keeps happening the host can never finish claiming it. A retry
+  // schedule has to leave windows longer than an enumeration takes, and then
+  // stop, because past a few attempts the fault is not one a reset clears and
+  // hammering it only guarantees the quiet period never arrives.
+  static uint8_t  kicks      = 0;
   static uint32_t lastKickMs = 0;
+  static const uint32_t kBackoffMs[] = { 12000, 45000, 120000, 300000 };
   const bool neverHeardUs = haveStatus && lastStatus.linkSilentS == 0xFFFF;
   const bool nothingWorking = !rxHello && (!haveStatus || neverHeardUs);
-  if (nothingWorking && millis() > 12000 && millis() - lastKickMs > 30000) {
+  if (!nothingWorking) { kicks = 0; }
+  else if (kicks < sizeof kBackoffMs / sizeof kBackoffMs[0] &&
+           millis() > 12000 &&
+           millis() - lastKickMs > kBackoffMs[kicks]) {
+    ++kicks;
     lastKickMs = millis();
     usbPeripheralReset();
   }

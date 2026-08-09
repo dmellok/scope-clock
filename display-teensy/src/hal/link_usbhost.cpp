@@ -19,6 +19,7 @@
 //      event is always better than stalling the beam.
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "debug.h"
 #include "hal/link.h"
 #include "protocol.h"     // shared/
 #include "state.h"
@@ -127,6 +128,19 @@ void sendHello() {
 
 void poll(DeviceState& dev, ClockState& clk) {
   myusb.Task();             // drives enumeration/callbacks; never blocks
+
+  // Why the link is down, from the side that can actually see it. The bridge
+  // can only report that nothing arrived; only this end knows whether the host
+  // port ever claimed a device. Costs nothing with no console attached, since
+  // dbg::sayf drops everything when the port has no room, and it prints only
+  // while the link is DOWN — a healthy clock says nothing at all.
+  {
+    static uint32_t lastSay = 0;
+    if (!(bool)userial && millis() - lastSay > 1000) {
+      lastSay = millis();
+      dbg::sayf("link down: no device claimed, t=%lus", (unsigned long)(millis() / 1000));
+    }
+  }
 
   // Greet the bridge once per connection, not once per boot — on USB the
   // device can arrive long after we did, and can come and go.
