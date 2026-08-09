@@ -18,7 +18,8 @@ ENV_PATH = os.path.join(env["PROJECT_DIR"], ".env")  # noqa: F821
 # Only these are accepted, so a stray line in .env cannot inject arbitrary
 # defines into the build.
 ALLOWED = ("WIFI_SSID", "WIFI_PASS", "TZ_POSIX", "NTP1", "OTA_HOST", "OTA_PASS",
-           "MQTT_HOST", "MQTT_PORT", "MQTT_USER", "MQTT_PASS", "MQTT_PREFIX")
+           "MQTT_HOST", "MQTT_PORT", "MQTT_USER", "MQTT_PASS", "MQTT_PREFIX",
+           "WEB_AUTH")
 SECRET = ("WIFI_PASS", "OTA_PASS", "MQTT_PASS")
 
 

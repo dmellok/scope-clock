@@ -1349,7 +1349,20 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
 // credentials. Existing secrets are never rendered back — a blank field means
 // "leave it alone", so the page cannot be used to read them out.
 
+// The config page is gated on the OTA password by default. WEB_AUTH=0 in .env
+// turns that off, which is a LAN-only convenience: anyone who can reach the
+// bridge can then drive the clock and read this page. Nothing here echoes a
+// stored Wi-Fi or MQTT password back, so the exposure is control rather than
+// credentials, but it is still an open door on whatever network it is on.
+// A STRING, not a number: load_env.py stringifies every value it passes
+// through, which is what keeps a Wi-Fi password with a $ or a space in it
+// intact, so this arrives as "0" or "1" and cannot be tested with #if.
+#ifndef WEB_AUTH
+#define WEB_AUTH "1"
+#endif
+
 static bool webAuthed() {
+  if (WEB_AUTH[0] == '0') return true;          // gate turned off in .env
   if (!strlen(OTA_PASS)) return true;           // no password set, no gate
   if (web.authenticate("admin", OTA_PASS)) return true;
   web.requestAuthentication();
@@ -1837,10 +1850,19 @@ void loop() {
   // fault it would have fixed, and recovery fell through to checkLink's 30s
   // boot gate plus its 60s rate limit — up to a minute and a half of a link
   // that looks dead and gives no sign of trying. Hence the second arm.
-  static bool bootKick = false;
+  //
+  // And it RETRIES. checkLink is driven by incoming Status, so when nothing
+  // arrives at all it never runs — leaving a single 12s kick as the only
+  // automatic attempt in exactly the case that needs the most. The far side has
+  // the mirror of this: it restarts itself when the port drops, but only if the
+  // port was up at some point since ITS boot, so a device reflashed while the
+  // port never re-claimed will sit there forever. Two one-shots facing each
+  // other is a dead end, and it is the state a Teensy reflash lands in.
+  static uint32_t lastKickMs = 0;
   const bool neverHeardUs = haveStatus && lastStatus.linkSilentS == 0xFFFF;
-  if (!bootKick && millis() > 12000 && !rxHello && (!haveStatus || neverHeardUs)) {
-    bootKick = true;
+  const bool nothingWorking = !rxHello && (!haveStatus || neverHeardUs);
+  if (nothingWorking && millis() > 12000 && millis() - lastKickMs > 30000) {
+    lastKickMs = millis();
     usbPeripheralReset();
   }
 
