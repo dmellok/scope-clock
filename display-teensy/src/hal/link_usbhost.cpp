@@ -101,7 +101,24 @@ uint32_t lastHelloMs = 0;
 
 namespace hal { namespace link {
 
+// Restart budget, kept in memory that a SOFTWARE reset does not clear — SRAM
+// holds its contents when power never drops, which is exactly the difference
+// between the two kinds of reset here. That is what lets "restart and try
+// again" be BOUNDED rather than a loop: the count survives the restart it
+// causes, so the second attempt knows it is the second.
+__attribute__((section(".noinit"))) uint32_t claimTries;
+__attribute__((section(".noinit"))) uint32_t claimMagic;
+constexpr uint32_t kClaimMagic = 0x5C10C4A1;
+constexpr uint32_t kMaxClaimTries = 2;
+
 void init() {
+  // A power-on reset is a fresh start in every sense, and .noinit is undefined
+  // after one, so the budget is reseeded there and only there. RCM_SRS0 bit 7
+  // is POR; see dbg::resetCause().
+  if (claimMagic != kClaimMagic || (RCM_SRS0 & 0x80)) {
+    claimMagic = kClaimMagic;
+    claimTries = 0;
+  }
   myusb.begin();            // starts the host stack; enumeration is async
 }
 
@@ -138,7 +155,9 @@ void poll(DeviceState& dev, ClockState& clk) {
     static uint32_t lastSay = 0;
     if (!(bool)userial && millis() - lastSay > 1000) {
       lastSay = millis();
-      dbg::sayf("link down: no device claimed, t=%lus", (unsigned long)(millis() / 1000));
+      dbg::sayf("link down: no device claimed, t=%lus try=%lu/%lu",
+                (unsigned long)(millis() / 1000),
+                (unsigned long)claimTries, (unsigned long)kMaxClaimTries);
     }
   }
 
@@ -171,11 +190,31 @@ void poll(DeviceState& dev, ClockState& clk) {
   // bridge that is simply unplugged costs exactly one restart, not a cycle.
   static bool     everBeenUp = false;
   static uint32_t downSince  = 0;
-  if (isUp) { everBeenUp = true; downSince = 0; }
+  if (isUp) { everBeenUp = true; downSince = 0; claimTries = 0; }
   else if (everBeenUp && !downSince) downSince = now;
   if (downSince && (now - downSince) > 25000 && now > 45000) {
     hal::dac::blank(true);          // never leave the beam parked and lit
     SCB_AIRCR = 0x05FA0004;         // system reset
+  }
+
+  // Never claimed anything at all, which is a different fault from losing a
+  // device that was working. It is what a cold boot with the bridge already
+  // plugged in can land in: USBHost_t36 does not pick up something that was
+  // sitting there when its stack came up, and no amount of resetting the far
+  // side's peripheral helps — proven the hard way, where only physically
+  // replugging the AtomS3U recovered it. Restarting THIS end is the software
+  // equivalent of that replug, since it re-enumerates the bus from scratch.
+  //
+  // Budgeted, not repeated: a clock with no bridge attached must not restart
+  // forever, so it gets kMaxClaimTries per power cycle and then gives up and
+  // runs as a standalone clock, which is a perfectly good thing to be.
+  if (!everBeenUp && claimTries < kMaxClaimTries && now > 40000) {
+    ++claimTries;
+    dbg::sayf("link: nothing claimed in 40s, restarting (%lu/%lu)",
+              (unsigned long)claimTries, (unsigned long)kMaxClaimTries);
+    delay(20);                      // let that line reach the console
+    hal::dac::blank(true);
+    SCB_AIRCR = 0x05FA0004;
   }
 
   wasUp = isUp;

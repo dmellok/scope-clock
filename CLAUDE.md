@@ -115,6 +115,14 @@ clone it alongside.
   when its stack came up, and a replug into an already-running Teensy is the one
   thing that gives it a clean attach event. Reflashing the Teensy and OTAing the
   bridge back to back is the reliable way to land in it; leave ~30s between.
+  The device now does that replug in software: if its host port has claimed
+  NOTHING 40s after boot it restarts itself, which re-enumerates the bus from
+  scratch. Budgeted at two attempts per POWER-ON, not repeated, so a clock with
+  no bridge gives up and runs standalone. The budget lives in a `.noinit`
+  variable, because SRAM survives a software reset and not a power cycle —
+  which is precisely the distinction needed for the count to outlive the restart
+  it causes. Confirmed on hardware: uptime 35s with nothing claimed, then 5s
+  with the link up.
   Ask both ends before theorising — they now answer. The device prints
   `link down: no device claimed` once a second on the front-jack console while
   its host port holds nothing, and `/api/state` carries `usb`, which is whether
