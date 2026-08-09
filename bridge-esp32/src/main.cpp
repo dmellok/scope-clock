@@ -477,7 +477,12 @@ static uint8_t  curFace       = 0;
 // the bridge owns the persistence, because the Teensy has nowhere to keep it and
 // the bridge already has NVS for config. Saved lazily: the knob emits one of
 // these per detent and NVS is flash.
-static uint8_t  faceScale[32];
+// One byte per face with headroom; sized past kFaceCount on purpose, because
+// this table being SHORTER than the registry is what hid the atom's size
+// control. An older 32-byte NVS blob reads back into the front of this and
+// leaves the rest at the default, so no migration is needed.
+static uint8_t  faceScale[64];
+static_assert(sizeof faceScale >= kFaceCount, "more faces than scale slots");
 static bool     scaleDirty = false;
 static uint32_t scaleSaveAt = 0;
 
@@ -486,13 +491,14 @@ static uint32_t scaleSaveAt = 0;
 constexpr uint8_t kDefaultScale = 70;
 
 static void scaleLoad() {
-  for (uint8_t i = 0; i < 32; ++i) faceScale[i] = kDefaultScale;
+  for (uint8_t i = 0; i < sizeof faceScale; ++i) faceScale[i] = kDefaultScale;
   prefs.begin("scopeclock", true);
   // Pre-filled above, so an absent key simply leaves the defaults in place.
   prefs.getBytes("fscale", faceScale, sizeof faceScale);
   prefs.end();
-  for (uint8_t i = 0; i < 32; ++i)
-    if (faceScale[i] < 40 || faceScale[i] > 250) faceScale[i] = kDefaultScale;
+  for (uint8_t i = 0; i < sizeof faceScale; ++i)
+    if (faceScale[i] < proto::kMinScale || faceScale[i] > proto::kMaxScale)
+      faceScale[i] = kDefaultScale;
 }
 static void scaleSaveSoon() { scaleDirty = true; scaleSaveAt = millis() + 2000; }
 static void scaleSaveTick() {
@@ -669,7 +675,7 @@ static void faceChosenByUser(uint8_t f) {
 
 static void sendScales() {
   uint8_t p[proto::MAX_PAYLOAD];
-  const uint8_t n = kFaceCount < 32 ? kFaceCount : 32;
+  const uint8_t n = kFaceCount < sizeof faceScale ? kFaceCount : (uint8_t)sizeof faceScale;
   p[0] = n;
   for (uint8_t i = 0; i < n; ++i) p[1 + i] = faceScale[i];
   sendFrame(proto::Msg::SetScales, p, (uint8_t)(n + 1));
@@ -1210,7 +1216,8 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
     case proto::Msg::EventScale:
       // The knob changed a face's size. The device is already showing it; all
       // this end has to do is remember.
-      if (len >= 2 && p[0] < 32 && p[1] >= 40 && p[1] <= 250) {
+      if (len >= 2 && p[0] < sizeof faceScale &&
+          p[1] >= proto::kMinScale && p[1] <= proto::kMaxScale) {
         faceScale[p[0]] = p[1];
         scaleSaveSoon();
         mqtt.publish(topic("scale/state").c_str(), String(p[1]).c_str(), true);
@@ -1249,7 +1256,7 @@ static void handleState() {
   j += "\"face\":\"" + String(curFace < kFaceCount ? faceName(curFace) : "?") + "\",";
   j += "\"mode\":" + String(haveStatus ? s.mode : 0) + ",";
   j += "\"bri\":"  + String(curBrightness) + ",";
-  j += "\"scale\":" + String(curFace < 32 ? faceScale[curFace] : kDefaultScale) + ",";
+  j += "\"scale\":" + String(curFace < sizeof faceScale ? faceScale[curFace] : kDefaultScale) + ",";
   j += "\"autonp\":" + String(autoNowPlaying ? 1 : 0) + ",";
   j += "\"wobble\":" + String(wobbleOn ? 1 : 0) + ",";
   j += "\"elem\":" + String(atomZ) + ",";
@@ -1333,9 +1340,9 @@ static void handleApi() {
   } else if (uri.endsWith("/scale")) {
     // Applies to whichever face is showing, which is the one the slider is for.
     long v = body.toInt();
-    if (v < 40) v = 40;
-    if (v > 250) v = 250;
-    if (curFace < 32) { faceScale[curFace] = (uint8_t)v; scaleSaveSoon(); sendScales(); }
+    if (v < proto::kMinScale) v = proto::kMinScale;
+    if (v > proto::kMaxScale) v = proto::kMaxScale;
+    if (curFace < sizeof faceScale) { faceScale[curFace] = (uint8_t)v; scaleSaveSoon(); sendScales(); }
   } else if (uri.endsWith("/notify")) {
     applyNotify(body, bannerMs);
   } else if (uri.endsWith("/banner")) {

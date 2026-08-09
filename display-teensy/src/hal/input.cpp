@@ -129,10 +129,13 @@ void poll(DeviceState& dev) {
 
   if (detents != 0 && dev.scaleMode) {
     // Adjusting the size of the face in front of you, not choosing another one.
-    int v = dev.faceScale[dev.faceId % DeviceState::kMaxFaces] + detents * 5;
-    if (v < 40)  v = 40;
-    if (v > 250) v = 250;
-    dev.faceScale[dev.faceId % DeviceState::kMaxFaces] = (uint8_t)v;
+    // Bounds-checked rather than wrapped: the modulo meant a face past
+    // kMaxFaces adjusted a different face's size while showing its own.
+    if (dev.faceId >= DeviceState::kMaxFaces) return;
+    int v = dev.faceScale[dev.faceId] + detents * 5;
+    if (v < proto::kMinScale) v = proto::kMinScale;
+    if (v > proto::kMaxScale) v = proto::kMaxScale;
+    dev.faceScale[dev.faceId] = (uint8_t)v;
     dev.scaleModeUntilMs = millis() + kScaleIdleMs;
     const uint8_t p[2] = { dev.faceId, (uint8_t)v };
     hal::link::send(static_cast<uint8_t>(proto::Msg::EventScale), p, 2);

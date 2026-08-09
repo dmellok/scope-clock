@@ -74,7 +74,27 @@ def main():
             print("  -", b)
         return 1
     print(f"ok: {len(names)} faces, {len(runs)} families, names and groups in step")
-    return check_fonts()
+    return check_fonts() or check_scale_slots(len(names))
+
+
+# The per-face size table has to be at least as long as the registry. It was 32
+# while there were 46, and nothing failed: the device indexed it with
+# faceId % kMaxFaces, so the atom (face 34) quietly adjusted the tick dial's
+# size and its own control did nothing at all.
+def check_scale_slots(n):
+    dev = re.search(r"kMaxFaces\s*=\s*(\d+)",
+                    (ROOT / "display-teensy/include/state.h").read_text())
+    bri = re.search(r"faceScale\[(\d+)\]",
+                    (ROOT / "bridge-esp32/src/main.cpp").read_text())
+    if not dev or not bri:
+        print("cannot find the scale table sizes")
+        return 1
+    d, b = int(dev.group(1)), int(bri.group(1))
+    if d < n or b < n:
+        print(f"scale table too short for {n} faces: device {d}, bridge {b}")
+        return 1
+    print(f"ok: scale slots {d} device / {b} bridge, for {n} faces")
+    return 0
 
 
 # The typeface list is spelled out in three places for three different reasons:

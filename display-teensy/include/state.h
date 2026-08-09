@@ -36,7 +36,12 @@ struct DeviceState {
   // size but a tube's usable area is its own; this is the adjustment, and it is
   // per face because a dense face and a sparse one want different answers.
   // The host owns the persistence and re-sends the table on Hello.
-  static constexpr uint8_t kMaxFaces = 32;
+  // Must be at least the number of registered faces. It was 32 while there
+  // were 27, and the overflow did not fail loudly — faceId % kMaxFaces made
+  // face 34 (the atom) alias face 2, so its size control did nothing and
+  // secretly resized the tick dial instead. tools/check_faces.py now checks
+  // this bound. 64 is a byte per face with room to grow.
+  static constexpr uint8_t kMaxFaces = 64;
   // 70% of the render's nominal size. The render scales device units by 3/2 to
   // reach the tube's 1800-count rim, which puts a face's own 1200-unit edge
   // exactly on the glass — right for a full-bleed animation, too tight for a

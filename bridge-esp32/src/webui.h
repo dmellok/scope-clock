@@ -158,7 +158,7 @@ footer a:hover{text-decoration:underline}
   </div>
   <div class="row" style="margin-top:10px">
     <label class="mini" style="flex:1;gap:9px">size
-      <input type="range" id="fscale" min="40" max="250" step="5" style="flex:1">
+      <input type="range" id="fscale" min="20" max="250" step="5" style="flex:1">
       <span id="fscaleval" style="min-width:3.2rem;text-align:right">--</span>
     </label>
   </div>
@@ -166,7 +166,9 @@ footer a:hover{text-decoration:underline}
     families, the button walks the faces inside one. Either overrides whatever
     is pushed.<br>
     <b>Size</b> applies to the face showing now and is remembered per face, so a
-    dense one and a sparse one can each be sized to the tube. You can also set it
+    dense one and a sparse one can each be sized to the tube. It goes down to
+    20%, though below about 30% the labels stop shrinking with the drawing —
+    the font's scale is a whole number and bottoms out. You can also set it
     at the clock: <b>hold the knob's button</b> to enter size mode, turn to
     adjust, tap to leave — it gives the knob back on its own after 8s.<br>
     <b>Typeface</b> is used by every face that does not ask for a specific one,

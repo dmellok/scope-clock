@@ -203,7 +203,14 @@ void expandTemplate(DrawList& list, const ClockState& clk,
 // with the geometry or the letters stay put while the layout grows around them.
 void scaleList(DrawList& list, int pct) {
   if (pct == 100) return;
-  auto s16 = [&](int16_t v) { return (int16_t)((int32_t)v * pct / 100); };
+  // Rounded, not truncated. At small percentages truncation is a large
+  // relative error on the values that matter most: a text scale of 6 at 30%
+  // is 1.8, which truncates to 1 and draws a third smaller than the
+  // geometry around it.
+  auto s16 = [&](int16_t v) {
+    const int32_t n = (int32_t)v * pct;
+    return (int16_t)((n < 0 ? n - 50 : n + 50) / 100);
+  };
   for (uint8_t i = 0; i < list.count; ++i) {
     Item& it = list.items[i];
     it.x = s16(it.x); it.y = s16(it.y);

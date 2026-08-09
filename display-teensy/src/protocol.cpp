@@ -215,7 +215,7 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
       for (uint8_t i = 0; i < n && i < DeviceState::kMaxFaces; ++i) {
         const uint8_t v = payload[1 + i];
         // Ignore nonsense rather than let the host shrink a face to nothing.
-        if (v >= 40 && v <= 250) dev.faceScale[i] = v;
+        if (v >= proto::kMinScale && v <= proto::kMaxScale) dev.faceScale[i] = v;
       }
       break;
     }

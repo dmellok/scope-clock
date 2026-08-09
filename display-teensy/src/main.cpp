@@ -132,7 +132,10 @@ void loop() {
   // Per-face size, applied to the face and not to what goes on top of it, so a
   // notification stays where it was put whatever the face is scaled to.
   if (dev.mode == Mode::Face)
-    scaleList(frame, dev.faceScale[dev.faceId % DeviceState::kMaxFaces]);
+    // Bounds-checked, not wrapped: the modulo this replaces turned an
+    // out-of-range face into a silently wrong answer rather than a default.
+    scaleList(frame, dev.faceId < DeviceState::kMaxFaces
+                       ? dev.faceScale[dev.faceId] : DeviceState::kDefaultScale);
   overlayNotify(dev, frame);     // 5. notification on top, already positioned
 
   vec::setBrightness(dev.brightness);

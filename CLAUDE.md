@@ -238,7 +238,15 @@ clone it alongside.
   brightness. And anything in device units that must stay on the glass has to sit
   at or under 1200 (the notification strips were at 1215, which was inside the
   old field and outside this one).
-- **Per-face scale defaults to 70%.** 100% puts a face's own 1200-unit edge on
+- **The per-face size table must be at least as long as the registry.** It was
+  `kMaxFaces = 32` while there were 46 faces, and nothing failed loudly: the
+  device indexed it `faceScale[faceId % kMaxFaces]`, so the atom (face 34)
+  aliased face 2 — its own size control did nothing, and adjusting it silently
+  resized the tick dial. Fourteen faces were affected. Both sides now hold 64
+  and index with a bounds check rather than a modulo, and `check_faces.py`
+  proves the bound from source. A wrapping index turns an out-of-range value
+  into a plausible wrong answer; a bounds check turns it into a default.
+- **Per-face scale defaults to 70%, and the floor is 20%.** 100% puts a face's own 1200-unit edge on
   the rim, which suits a full-bleed animation and crowds a dial whose numerals
   then touch the glass. The bridge owns the persistence (NVS, `fscale`) because
   the Teensy has nowhere to keep it, and re-sends the whole table on Hello.

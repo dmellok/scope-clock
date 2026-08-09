@@ -12,6 +12,12 @@ namespace proto {
 static constexpr uint8_t START = 0x7E;
 static constexpr uint8_t MAX_PAYLOAD = 240;
 
+// Per-face size, in percent. Shared so the page, the bridge, the knob and the
+// device cannot disagree about the range — they did, and the slider's floor
+// was the only one anybody could see.
+static constexpr uint8_t kMinScale = 20;
+static constexpr uint8_t kMaxScale = 250;
+
 enum class Msg : uint8_t {
   // host -> device
   SetTime        = 0x01,   // local (TZ/DST-applied) time -> RTC
@@ -110,7 +116,10 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 //              A text item at x=0,y=0 opts into the device's own centring.
 //
 // Banner       [ms:u16][priority:u8][chars...]   text runs to end of payload
-// SetScales    [count:u8][pct:u8 x count]   100 = nominal, clamped 40..250.
+// SetScales    [count:u8][pct:u8 x count]   100 = nominal, clamped to
+//                kMinScale..kMaxScale. The floor is 20 rather than something
+//                smaller because a face's text stops shrinking with it: the
+//                font's scale is an integer and bottoms out at 1.
 //                Sent on Hello and whenever the host changes one, so the
 //                device can apply it without a round trip when the knob
 //                selects a face.
