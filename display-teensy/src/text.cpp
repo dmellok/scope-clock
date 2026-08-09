@@ -364,15 +364,78 @@ const int16_t* const Kana[] = {
 };
 constexpr int kKanaCount = (int)(sizeof(Kana) / sizeof(Kana[0]));
 
-// One lookup for both pages, so every text path — faces, pushed scenes, the
-// ticker — gets katakana without knowing they exist.
-inline const int16_t* glyph(char ch) {
+// --- typeface 1: seven segment ----------------------------------------------
+// Generated from a segment map rather than typed out, because "which of the
+// seven is lit" is exactly the sort of table a person transcribes wrongly.
+// Digits, the hex letters, and enough besides to write HELP or 88:88.
+//
+// It covers a subset on purpose. A seven-segment display cannot render most
+// letters and the ones people fake — K, M, W — read as noise, so anything not
+// in this page falls back to a space rather than drawing a lie.
+const int16_t SV_d0[] = { lin,3,20,10,20,6,13, lin,11,19,11,11,6,13, lin,11,9,11,1,6,13, lin,3,0,10,0,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13,0x8c };
+const int16_t SV_d1[] = { lin,11,19,11,11,6,13, lin,11,9,11,1,6,13,0x8c };
+const int16_t SV_d2[] = { lin,3,20,10,20,6,13, lin,11,19,11,11,6,13, lin,3,0,10,0,6,13, lin,1,9,1,1,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_d3[] = { lin,3,20,10,20,6,13, lin,11,19,11,11,6,13, lin,11,9,11,1,6,13, lin,3,0,10,0,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_d4[] = { lin,11,19,11,11,6,13, lin,11,9,11,1,6,13, lin,1,19,1,11,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_d5[] = { lin,3,20,10,20,6,13, lin,11,9,11,1,6,13, lin,3,0,10,0,6,13, lin,1,19,1,11,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_d6[] = { lin,3,20,10,20,6,13, lin,11,9,11,1,6,13, lin,3,0,10,0,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_d7[] = { lin,3,20,10,20,6,13, lin,11,19,11,11,6,13, lin,11,9,11,1,6,13,0x8c };
+const int16_t SV_d8[] = { lin,3,20,10,20,6,13, lin,11,19,11,11,6,13, lin,11,9,11,1,6,13, lin,3,0,10,0,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_d9[] = { lin,3,20,10,20,6,13, lin,11,19,11,11,6,13, lin,11,9,11,1,6,13, lin,3,0,10,0,6,13, lin,1,19,1,11,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_A[] = { lin,3,20,10,20,6,13, lin,11,19,11,11,6,13, lin,11,9,11,1,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_B[] = { lin,11,9,11,1,6,13, lin,3,0,10,0,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_C[] = { lin,3,20,10,20,6,13, lin,3,0,10,0,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13,0x8c };
+const int16_t SV_D[] = { lin,11,19,11,11,6,13, lin,11,9,11,1,6,13, lin,3,0,10,0,6,13, lin,1,9,1,1,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_E[] = { lin,3,20,10,20,6,13, lin,3,0,10,0,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_F[] = { lin,3,20,10,20,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_H[] = { lin,11,19,11,11,6,13, lin,11,9,11,1,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_L[] = { lin,3,0,10,0,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13,0x8c };
+const int16_t SV_P[] = { lin,3,20,10,20,6,13, lin,11,19,11,11,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_U[] = { lin,11,19,11,11,6,13, lin,11,9,11,1,6,13, lin,3,0,10,0,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13,0x8c };
+const int16_t SV_N[] = { lin,3,20,10,20,6,13, lin,11,19,11,11,6,13, lin,11,9,11,1,6,13, lin,1,9,1,1,6,13, lin,1,19,1,11,6,13,0x8c };
+const int16_t SV_R[] = { lin,1,9,1,1,6,13, lin,1,19,1,11,6,13,0x8c };
+const int16_t SV_minus[] = { lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_under[] = { lin,3,0,10,0,6,13,0x8c };
+const int16_t SV_eq[] = { lin,3,0,10,0,6,13, lin,3,10,10,10,6,13,0x8c };
+const int16_t SV_colon[] = { cir,6,14,2,2,6,13, cir,6,5,2,2,6,13, 0x88 };
+const int16_t SV_dot[]   = { cir,6,1,2,2,6,13, 0x88 };
+const int16_t SV_deg[]   = { cir,5,17,3,3,6,13, 0x8a };
+// Ink spans x 1..11, so the advance is 12: at 14 there was one unit of side
+// bearing on the left and three on the right, and a row of digits drifted
+// right of centre by half that per character.
+const int16_t SV_space[] = { 0x8c };
+const int16_t SV_slash[] = { lin,1,1,11,19,6,13, 0x8c };
+
+// ASCII 0x20..0x7F, mostly blank: the segment page is a subset by nature.
+// Not called Seven — that name is already the glyph for the digit 7.
+const int16_t* const SegFont[96] = {
+  /*20*/ SV_space, SV_space, SV_space, SV_space, SV_space, SV_space, SV_space, SV_space,
+  /*28*/ SV_space, SV_space, SV_space, SV_space, SV_space, SV_minus, SV_dot,   SV_slash,
+  /*30*/ SV_d0, SV_d1, SV_d2, SV_d3, SV_d4, SV_d5, SV_d6, SV_d7,
+  /*38*/ SV_d8, SV_d9, SV_colon, SV_space, SV_space, SV_eq, SV_space, SV_space,
+  /*40*/ SV_space, SV_A, SV_B, SV_C, SV_D, SV_E, SV_F, SV_space,
+  /*48*/ SV_H, SV_space, SV_space, SV_space, SV_L, SV_space, SV_N, SV_d0,
+  /*50*/ SV_P, SV_space, SV_R, SV_d5, SV_space, SV_U, SV_space, SV_space,
+  /*58*/ SV_space, SV_space, SV_space, SV_space, SV_space, SV_space, SV_deg, SV_under,
+  /*60*/ SV_space, SV_A, SV_B, SV_C, SV_D, SV_E, SV_F, SV_space,
+  /*68*/ SV_H, SV_space, SV_space, SV_space, SV_L, SV_space, SV_N, SV_d0,
+  /*70*/ SV_P, SV_space, SV_R, SV_d5, SV_space, SV_U, SV_space, SV_space,
+  /*78*/ SV_space, SV_space, SV_space, SV_space, SV_space, SV_space, SV_space, SV_space,
+};
+
+// One lookup for every page, so every text path — faces, pushed scenes, the
+// ticker — gets katakana and the segment face without knowing they exist.
+inline const int16_t* glyph(char ch, uint8_t font) {
   const uint8_t c = (uint8_t)ch;
+  // Katakana live above 0x7F and exist only in the stroke face; asking the
+  // segment face for one gets a blank rather than an index off the end.
   if (c >= 0xA0) {
+    if (font != 0) return SegFont[0];
     const int i = c - 0xA0;
     return Kana[i < kKanaCount ? i : 0];
   }
-  return Font[(c & 0x7f) - 32];
+  const int i = (c & 0x7f) - 32;
+  return font ? SegFont[i] : Font[i];
 }
 
 // SetScale(): derive the scaled metrics for a given scale factor.
@@ -388,7 +451,7 @@ Metrics metrics(int scale) {
 // GetWid(): scaled width of one string, stopping at '\n' or NUL. `newline` is
 // set when the string ended with '\n', which is how a row break is marked; the
 // original drops one kern in that case so a row has n-1 gaps, not n.
-int strWidth(int scale, const char* s, bool& newline) {
+int strWidth(int scale, const char* s, bool& newline, uint8_t font) {
   int cells = 0, count = 0;
   // UNSIGNED, and it matters. `char` is unsigned on the Teensy and signed on the
   // host the sim builds for, so a katakana code of 0xA0 compares as 160 on the
@@ -397,7 +460,7 @@ int strWidth(int scale, const char* s, bool& newline) {
   uint8_t ch = 0;
   if (s) {
     while ((ch = (uint8_t)*s++) >= 0x20) {
-      const int16_t* seg = glyph(ch);
+      const int16_t* seg = glyph((char)ch, font);
       while (*seg < 0x80) seg += kSegLen;   // skip segments, land on the width
       cells += *seg & 0x7f;
       count++;
@@ -412,13 +475,13 @@ int strWidth(int scale, const char* s, bool& newline) {
 
 // DispStr(): walk the string, emit each glyph's segments at the running pen
 // position. Stops at any control character, so '\n' terminates a string.
-void drawString(int x, int y, int scale, const char* s) {
+void drawString(int x, int y, int scale, const char* s, uint8_t font) {
   if (!s || scale <= 0) return;
   const Metrics m = metrics(scale);
   int penX = x;
 
   for (uint8_t ch = (uint8_t)*s++; ch >= 0x20; ch = (uint8_t)*s++) {
-    const int16_t* seg = glyph((char)ch);
+    const int16_t* seg = glyph((char)ch, font);
     for (;;) {
       const int16_t v = *seg++;
       if (v >= 0x80) {                       // end flag: low bits are the width
@@ -441,9 +504,9 @@ void drawString(int x, int y, int scale, const char* s) {
   }
 }
 
-int measure(int scale, const char* s) {
+int measure(int scale, const char* s, uint8_t font) {
   bool nl;
-  return strWidth(scale, s, nl);
+  return strWidth(scale, s, nl, font);
 }
 
 int kern(int scale)   { return metrics(scale).kern; }
@@ -479,7 +542,7 @@ void centerLines(DrawList& list) {
     const Item& it = list.items[i];
     if (it.type != ItemType::Text) { widths[i] = 0; endsRow[i] = false; continue; }
     m = metrics(it.scale);
-    widths[i] = strWidth(it.scale, it.str, endsRow[i]);
+    widths[i] = strWidth(it.scale, it.str, endsRow[i], it.font);
     rowWidth += widths[i];
     if (endsRow[i]) {
       rowWidths[rows++] = rowWidth;

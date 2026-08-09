@@ -155,20 +155,31 @@ void sector(const ClockState& c, DrawList& d) {
 // Digital: HH:MM large with SS below. The leading empty row is a spacer that
 // drops the block slightly, which reads as better centred than true centring.
 void digital(const ClockState& c, DrawList& d) {
-  static char hh[3], mm[3], ss[4];
+  static char hh[3], mm[4], ss[4];
   const int h = c.hr12 ? to12(c.hour) : c.hour;
   hh[0] = (char)('0' + h / 10); hh[1] = (char)('0' + h % 10); hh[2] = 0;
   if (c.hr12 && hh[0] == '0') { hh[0] = hh[1]; hh[1] = 0; }   // no leading zero
-  mm[0] = (char)('0' + c.minute / 10); mm[1] = (char)('0' + c.minute % 10); mm[2] = 0;
+  // The minutes CARRY the row break, rather than a separate "\n" item doing it.
+  // strWidth returns a negative width for a lone newline — it subtracts one kern
+  // and has no cells to add — so an empty terminator item dragged the whole row
+  // off centre by half a kern.
+  mm[0] = (char)('0' + c.minute / 10); mm[1] = (char)('0' + c.minute % 10);
+  mm[2] = '\n'; mm[3] = 0;
   ss[0] = (char)('0' + c.second / 10); ss[1] = (char)('0' + c.second % 10);
   ss[2] = '\n'; ss[3] = 0;
 
-  d.text(0, 0, 10, "\n");
-  d.text(0, 0, 40, hh);
-  d.text(0, 0, 40, ":");
-  d.text(0, 0, 40, mm);
-  d.text(0, 0, 40, "\n");
-  d.text(0, 0, 30, ss);
+  // Seven segment, because that is what a digital clock is. The stroke face is
+  // still what datetime and every other text face uses; this is the one place
+  // the shape of the numerals is the point.
+  // Scale 30, not the 40 the stroke face used: a segment glyph advances 14 cells
+  // against the stroke font's 12, so the same digits are a sixth wider and
+  // "10:08" at 40 ran 180 counts past the rim.
+  constexpr uint8_t kSeg = 1;
+  d.text(0, 0, 10, "\n", kSeg);
+  d.text(0, 0, 30, hh, kSeg);
+  d.text(0, 0, 30, ":", kSeg);
+  d.text(0, 0, 30, mm, kSeg);
+  d.text(0, 0, 22, ss, kSeg);
 }
 
 namespace {

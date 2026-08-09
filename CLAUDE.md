@@ -118,6 +118,16 @@ clone it alongside.
   the device (160) and rejects it in the sim (-96) — the tube would have drawn
   the rain while the harness measured an empty string. Both loops in text.cpp
   use uint8_t now. Anything above 0x7F in a string is exposed to this.
+- **The font has TYPEFACES now, selected per text item.** `Item.font` is 0 for
+  the stroke face and 1 for seven segment; `DrawList::text(...,font)` and
+  `txt::drawString/measure/inkWidth` all take it, and `centerLines` measures with
+  the item's own face. Adding a third means one glyph table and one branch in
+  `glyph()`.
+  The segment page is a SUBSET on purpose — a seven-segment cell cannot render
+  most letters, and the ones people fake (K, M, W) read as noise, so anything
+  outside digits/hex/a few others falls back to a space rather than drawing a
+  lie. Watch side bearings: its ink spans x 1..11, and an advance of 14 walked a
+  row of digits right of centre.
 - **The font has a second page at 0xA0: 32 katakana.** They suit a stroke font —
   two to four straight strokes each — where hiragana would need curves it cannot
   draw. Reached through the same `glyph()` lookup, so faces, pushed scenes and

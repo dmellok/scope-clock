@@ -275,7 +275,7 @@ void renderFrame(const DrawList& list) {
   for (uint8_t i = 0; i < list.count; ++i) {
     const Item& it = list.items[i];
     switch (it.type) {
-      case ItemType::Text:   txt::drawString(it.x, it.y, it.scale, it.str); break;
+      case ItemType::Text:   txt::drawString(it.x, it.y, it.scale, it.str, it.font); break;
       case ItemType::Line:   line(it.x, it.y, it.x2, it.y2);                break;
       case ItemType::Circle: arc(it.x, it.y, it.x2);                        break;
       default: break;

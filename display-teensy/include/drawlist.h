@@ -15,6 +15,7 @@ struct Item {
   int16_t  x = 0, y = 0;     // Text: baseline start.  Line: start.  Circle: center.
   int16_t  x2 = 0, y2 = 0;   // Line: end.             Circle: (radius in x2)
   int16_t  scale = 10;
+  uint8_t  font = 0;         // Text/Clock: 0 stroke, 1 seven segment
   const char* str = nullptr; // Text only
 };
 
@@ -29,18 +30,18 @@ struct DrawList {
   uint8_t  count = 0;
 
   void clear() { count = 0; }
-  void text(int x, int y, int scale, const char* s) {
-    if (count < CAP) items[count++] = Item{ItemType::Text, (int16_t)x, (int16_t)y, 0, 0, (int16_t)scale, s};
+  void text(int x, int y, int scale, const char* s, uint8_t font = 0) {
+    if (count < CAP) items[count++] = Item{ItemType::Text, (int16_t)x, (int16_t)y, 0, 0, (int16_t)scale, font, s};
   }
   void line(int x0, int y0, int x1, int y1) {
-    if (count < CAP) items[count++] = Item{ItemType::Line, (int16_t)x0, (int16_t)y0, (int16_t)x1, (int16_t)y1, 0, nullptr};
+    if (count < CAP) items[count++] = Item{ItemType::Line, (int16_t)x0, (int16_t)y0, (int16_t)x1, (int16_t)y1, 0, 0, nullptr};
   }
   void circle(int cx, int cy, int r) {
-    if (count < CAP) items[count++] = Item{ItemType::Circle, (int16_t)cx, (int16_t)cy, (int16_t)r, 0, 0, nullptr};
+    if (count < CAP) items[count++] = Item{ItemType::Circle, (int16_t)cx, (int16_t)cy, (int16_t)r, 0, 0, 0, nullptr};
   }
   // scale carries the hand source (0 sec, 1 min, 2 hour); x2/y2 are the radii.
   void hand(int cx, int cy, int r0, int r1, int src) {
-    if (count < CAP) items[count++] = Item{ItemType::Hand, (int16_t)cx, (int16_t)cy, (int16_t)r0, (int16_t)r1, (int16_t)src, nullptr};
+    if (count < CAP) items[count++] = Item{ItemType::Hand, (int16_t)cx, (int16_t)cy, (int16_t)r0, (int16_t)r1, (int16_t)src, 0, nullptr};
   }
 };
 

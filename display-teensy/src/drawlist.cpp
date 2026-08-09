@@ -70,7 +70,7 @@ bool decodePushList(const uint8_t* payload, uint16_t len,
         arenaUsed += slen + 1u;
         p += slen;
         if (out.count < DrawList::CAP)
-          out.items[out.count++] = Item{ItemType::Clock, x, y, 0, 0, scale, dst};
+          out.items[out.count++] = Item{ItemType::Clock, x, y, 0, 0, scale, 0, dst};
         break;
       }
       case ItemType::Hand: {
