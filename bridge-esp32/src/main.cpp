@@ -9,6 +9,7 @@
 #include <Preferences.h>
 #include <time.h>
 #include <math.h>
+#include <limits.h>
 #include "protocol.h"     // shared/
 #include "webui.h"
 #include "soc/usb_serial_jtag_struct.h"
@@ -573,6 +574,11 @@ static String zonesJson;
 
 static void sendZones() {
   if (!zonesJson.length()) return;
+  // Refuse to send before the clock is set. Sending anyway means every delta is
+  // measured against an offset of zero, which is exactly the raw UTC offset —
+  // Auckland showed 22:40 instead of 12:41, ten hours out, which is Melbourne's
+  // own offset staring back. Better to send nothing until it can be right.
+  if (time(nullptr) < 1000000000L) return;
   const int local = localUtcOffsetMin();
   uint8_t p[proto::MAX_PAYLOAD];
   uint16_t at = 1;
@@ -1154,6 +1160,10 @@ static void handleState() {
   j += "\"autonp\":" + String(autoNowPlaying ? 1 : 0) + ",";
   j += "\"wobble\":" + String(wobbleOn ? 1 : 0) + ",";
   j += "\"elem\":" + String(atomZ) + ",";
+  // The bridge's own UTC offset, which is what every zone delta is measured
+  // against. Exposed because a wrong world clock looks identical to a wrong
+  // zone list from the outside.
+  j += "\"tzoff\":" + String(localUtcOffsetMin()) + ",";
   j += "\"frame\":" + String(haveStatus ? s.frameUs : 0) + ",";
   j += "\"hz\":"    + String(haveStatus ? s.hz : 0) + ",";
   j += "\"rtc\":"   + String(haveStatus && s.rtcOk ? 1 : 0) + ",";
@@ -1459,10 +1469,17 @@ void loop() {
   ArduinoOTA.handle();
   scaleSaveTick();     // lazy NVS write; the knob emits one event per detent
 
-  // Re-send the zone deltas every hour. Nothing on the device knows about
-  // summer time, so when a zone shifts this is the only thing that corrects it.
-  static uint32_t zoneAt = 0;
-  if (millis() - zoneAt > 3600000UL) { zoneAt = millis(); sendZones(); }
+  // Re-send the zone deltas whenever this bridge's own UTC offset changes.
+  //
+  // That covers all three cases with one test: NTP landing after the first send
+  // (offset moves from unknown to real), summer time starting or ending, and the
+  // timezone being edited on the config page. An hourly timer covered only the
+  // middle one, and left a wrong world clock on screen for up to an hour.
+  static int lastZoneOff = INT32_MIN;
+  if (zonesJson.length() && time(nullptr) >= 1000000000L) {
+    const int off = localUtcOffsetMin();
+    if (off != lastZoneOff) { lastZoneOff = off; sendZones(); }
+  }
 
   mqttConnect();
   mqtt.loop();

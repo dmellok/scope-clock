@@ -113,6 +113,14 @@ clone it alongside.
   Same shape as the RTC: the host supplies truth, the device keeps time against
   it. `gauges` is deliberately generic — n labelled percentages and a footer,
   nothing about where they came from — so any topic can drive it.
+- **Never send a time-derived value before the clock is set.** `sendZones()` ran
+  on Hello, which happens well before NTP lands, so every delta was measured
+  against an offset of zero — i.e. the raw UTC offset — and Auckland read 22:40
+  instead of 12:44, exactly Melbourne's own ten hours out. It now refuses to send
+  until `time()` is valid, and re-sends whenever the bridge's UTC offset CHANGES.
+  That one test covers NTP arriving late, summer time starting or ending, and the
+  timezone being edited, where the hourly timer it replaced covered only the
+  middle case and left a wrong clock up for an hour.
 - **The world clock never learns what a timezone is.** The host sends deltas in
   minutes relative to the DEVICE'S LOCAL TIME, not to UTC, so the device only
   ever adds a number. The bridge computes its own UTC offset from localtime vs

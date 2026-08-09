@@ -488,10 +488,27 @@ void asteroids(const ClockState&, DrawList& d) {
     }
     int diff = ((want - sang + vec::kSteps + vec::kSteps / 2) & (vec::kSteps - 1)) - vec::kSteps / 2;
     sang = (sang + (diff > 0 ? 6 : -6)) & (vec::kSteps - 1);
-    if (best < 90000) { svx -= (int32_t)(vec::sinT(sang) >> 13); svy -= (int32_t)(vec::cosT(sang) >> 13); }
+    // Thrust only when something is genuinely close. The old test compared a
+    // distance already divided by 64 against 90000, which is every rock within
+    // 2400 units — the whole field — so it accelerated constantly.
+    if (best < 4000) {                             // within about 500 units
+      svx -= (int32_t)(vec::sinT(sang) >> 12);
+      svy -= (int32_t)(vec::cosT(sang) >> 12);
+    }
   }
-  svx = svx * 63 / 64; svy = svy * 63 / 64;        // drag, so it does not run away
-  sx += svx; sy += svy; wrap(sx); wrap(sy);
+  // Velocity is in 64ths of a unit per frame. It has to be: with drag at 63/64
+  // the terminal speed is 64x the per-frame thrust, so whole units gave 512
+  // units a frame and the ship crossed the tube in under four of them. In 64ths
+  // the same drag lands at 16 units a frame, which is about two seconds from one
+  // edge to the other.
+  svx = svx * 63 / 64; svy = svy * 63 / 64;
+  constexpr int32_t kMaxV = 64 * 22;               // belt and braces
+  if (svx >  kMaxV) svx =  kMaxV;
+  if (svx < -kMaxV) svx = -kMaxV;
+  if (svy >  kMaxV) svy =  kMaxV;
+  if (svy < -kMaxV) svy = -kMaxV;
+  sx += svx >> 6; sy += svy >> 6;
+  wrap(sx); wrap(sy);
 
   if (++fire > 22) {
     fire = 0;
