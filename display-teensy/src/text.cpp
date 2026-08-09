@@ -565,6 +565,34 @@ void setDefaultFace(uint8_t id) { defaultFace = id < kFaceCount ? id : 0; }
 uint8_t defaultFaceId() { return defaultFace; }
 uint8_t faceCount() { return kFaceCount; }
 
+// The chord half-width at height y, by Newton — this keeps the whole thing off
+// the FPU, which the frame path does not use.
+static int32_t isqrt32(int32_t v) {
+  if (v <= 0) return 0;
+  int32_t x = v, y = (x + 1) / 2;
+  while (y < x) { x = y; y = (x + v / x) / 2; }
+  return x;
+}
+
+int centredFit(DrawList& list, int y, int maxScale, const char* s,
+               uint8_t font, int fieldR) {
+  if (!s || !s[0]) return 0;
+  // 60 units of descender allowance and 60 off the rim: the limit is where the
+  // INK ends, not where the baseline sits.
+  const int low  = (y < 0 ? y - 60 : y + 60);
+  const int32_t inside = (int32_t)fieldR * fieldR - (int32_t)low * low;
+  const int half = (int)isqrt32(inside);
+  int sc = maxScale;
+  const int unit = inkWidth(1, s, font);
+  if (unit > 0) {
+    sc = (2 * half - 120) / unit;
+    if (sc > maxScale) sc = maxScale;
+    if (sc < 3) sc = 3;
+  }
+  list.text(-inkWidth(sc, s, font) / 2, y, sc, s, font);
+  return sc;
+}
+
 // Center(): fill in x/y for text items so the block sits centred on (0,0).
 //
 // Tricky, because one row of text is several items (the digital face draws

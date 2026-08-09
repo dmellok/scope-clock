@@ -48,6 +48,8 @@ enum class Msg : uint8_t {
   EventButton    = 0x84,   // press | long
   Status         = 0x85,   // uptime, rtc ok + last-set age, mode, frame us
   EventScale     = 0x86,   // face id + new scale, when set at the knob
+  EventFont      = 0x87,   // typeface chosen at the knob
+  EventWobble    = 0x88,   // anti burn-in drift toggled at the knob
 };
 
 // CRC-8, polynomial 0x07. Incremental so a receiver can fold each byte in as

@@ -25,4 +25,12 @@ namespace txt {
     return measure(scale, s, font) - kern(scale);
   }
   void  centerLines(DrawList& list);          // fills in x for line-centered items
+
+  // Centre a line on the ROUND field at height y, shrinking until its ink fits
+  // the chord there rather than the full width — the bound near the top and
+  // bottom of the glass is the chord, and it is far narrower than the diameter.
+  // Measured at the lowest ink, because descenders hang below the baseline.
+  // Returns the scale actually used, or 0 if nothing was drawn.
+  int   centredFit(DrawList& list, int y, int maxScale, const char* s,
+                   uint8_t font = 0, int fieldR = 1200);
 }

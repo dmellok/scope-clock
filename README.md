@@ -82,9 +82,14 @@ The clock is autonomous: all 46 faces live on the Teensy and render from the
 DS3232, the knob and button work locally, and nothing in boot or the render loop
 waits on the link. Unplug the bridge and it keeps time and keeps drawing.
 
-**Hold the knob's button for 2.5 seconds to set the clock** — past the 0.8s that
-enters size mode. Turn for hours, tap, minutes, tap, seconds, tap to commit; walk
-away and it expires after 30s without changing anything.
+**Hold the knob's button for 2.5 seconds for the settings menu** — past the 0.8s
+that enters size mode. Turn to move, tap to select: set time, set date, face
+size, typeface, burn-in drift, info, exit. The editors take three fields each —
+turn to change, tap for the next, the last tap commits — and an edit you walk
+away from expires after 30s without changing anything.
+
+A setting is in that menu if changing it means something with no bridge
+attached. Wi-Fi, MQTT and the rest stay on the config page.
 
 What the bridge adds is NTP (and therefore summer time, which the device never
 reasons about), persistence for the per-face sizes and the other settings, the

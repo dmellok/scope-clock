@@ -51,7 +51,7 @@ struct DeviceState {
   bool      scaleMode = false;      // knob is adjusting scale, not choosing faces
   uint32_t  scaleModeUntilMs = 0;
 
-  // Setting the clock from the knob, with nothing else attached.
+  // Settings, from the knob, with nothing else attached.
   //
   // The RTC holds local time and the bridge is the only other thing that can
   // write it, so without this a clock with no bridge cannot be corrected at
@@ -60,12 +60,25 @@ struct DeviceState {
   //
   // Seeding and committing are flagged rather than done here: the RTC belongs
   // to the main loop, and hal::input has no business knowing it exists.
-  bool      timeMode   = false;
-  uint8_t   timeField  = 0;         // 0 hour, 1 minute, 2 second
-  uint8_t   timeEdit[3] = {0, 0, 0};
-  bool      timeSeed   = false;     // fill timeEdit from the RTC
-  bool      timeCommit = false;     // write timeEdit to the RTC
-  uint32_t  timeModeUntilMs = 0;
+  enum class Edit : uint8_t { None, Time, Date };
+
+  bool      menuMode   = false;     // the settings list is up
+  uint8_t   menuItem   = 0;
+  uint32_t  menuUntilMs = 0;
+
+  Edit      edit       = Edit::None;
+  uint8_t   editField  = 0;         // 0..2 within the kind
+  uint8_t   editVal[3] = {0, 0, 0}; // h,m,s  or  day,month,year%100
+  bool      editSeed   = false;     // fill editVal from the RTC
+  bool      editCommit = false;     // write editVal to the RTC
+  bool      editCommitDate = false; // ...as a date rather than a time
+  uint32_t  editUntilMs = 0;
+
+  // Set when the knob changes something the host also tracks, so the bridge can
+  // persist it. Same idea as EventScale, which already existed — without these
+  // a typeface chosen at the clock would be undone by the next Hello.
+  bool      fontChanged   = false;
+  bool      wobbleChanged = false;
 
   DeviceState() { for (uint8_t i = 0; i < kMaxFaces; ++i) faceScale[i] = kDefaultScale; }
 

@@ -10,11 +10,13 @@
 #include "hal/rtc.h"
 #include "hal/input.h"
 #include "hal/link.h"
+#include "protocol.h"     // shared/
 #include "hal/midi.h"
 #include "hal/audio.h"
 #include "hal/watchdog.h"
 #include "notify.h"
 #include "settime.h"
+#include "menu.h"
 #include "debug.h"
 
 static ClockState  clk;
@@ -78,20 +80,49 @@ void loop() {
 
   // The knob asked to set the clock. The RTC lives here, not in hal::input, so
   // seeding the editor and committing it are done on this side of the fence.
-  if (dev.timeSeed) {
-    dev.timeSeed = false;
+  if (dev.editSeed) {
+    dev.editSeed = false;
     hal::rtc::read(clk);
-    dev.timeEdit[0] = (uint8_t)clk.hour;
-    dev.timeEdit[1] = (uint8_t)clk.minute;
-    dev.timeEdit[2] = (uint8_t)clk.second;
+    if (dev.edit == DeviceState::Edit::Date) {
+      dev.editVal[0] = (uint8_t)clk.day;
+      dev.editVal[1] = (uint8_t)clk.month;
+      dev.editVal[2] = (uint8_t)clk.year;
+    } else {
+      dev.editVal[0] = (uint8_t)clk.hour;
+      dev.editVal[1] = (uint8_t)clk.minute;
+      dev.editVal[2] = (uint8_t)clk.second;
+    }
   }
-  if (dev.timeCommit) {
-    dev.timeCommit = false;
-    hal::rtc::read(clk);                  // keep the date, replace the time
-    clk.hour   = dev.timeEdit[0];
-    clk.minute = dev.timeEdit[1];
-    clk.second = dev.timeEdit[2];
+  if (dev.editCommit) {
+    // Which kind was committed is remembered separately, because dev.edit is
+    // cleared the moment the last tap lands.
+    const bool wasDate = dev.editCommitDate;
+    dev.editCommit = false;
+    hal::rtc::read(clk);                  // change one half, keep the other
+    if (wasDate) {
+      clk.day   = dev.editVal[0];
+      clk.month = dev.editVal[1];
+      clk.year  = dev.editVal[2];
+      // wday is derived from the date on every read, so it follows on its own.
+    } else {
+      clk.hour   = dev.editVal[0];
+      clk.minute = dev.editVal[1];
+      clk.second = dev.editVal[2];
+    }
     hal::rtc::write(clk);
+  }
+
+  // A setting changed at the knob that the host also keeps. Told once, so a
+  // bridge can persist it; harmless when there is no bridge listening.
+  if (dev.fontChanged) {
+    dev.fontChanged = false;
+    const uint8_t p = txt::defaultFaceId();
+    hal::link::send(static_cast<uint8_t>(proto::Msg::EventFont), &p, 1);
+  }
+  if (dev.wobbleChanged) {
+    dev.wobbleChanged = false;
+    const uint8_t p = vec::wobble() ? 1 : 0;
+    hal::link::send(static_cast<uint8_t>(proto::Msg::EventWobble), &p, 1);
   }
   hal::midi::poll();             // 2b. USB-MIDI in (bounded drain, front jack)
   vec::tickWobble();             // 2c. anti-burn-in drift, all modes
@@ -156,7 +187,8 @@ void loop() {
     scaleList(frame, dev.faceId < DeviceState::kMaxFaces
                        ? dev.faceScale[dev.faceId] : DeviceState::kDefaultScale);
   overlayNotify(dev, frame);     // 5. notification on top, already positioned
-  overlaySetTime(dev, frame);    //    ...and the clock setter over everything
+  overlaySetTime(dev, frame);    //    ...the editor, and the menu, over
+  overlayMenu(dev, frame);       //    everything else
 
   vec::setBrightness(dev.brightness);
   const uint32_t drawStart = micros();

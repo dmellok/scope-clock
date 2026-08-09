@@ -1213,6 +1213,23 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
       if (len >= 1)
         mqtt.publish(topic("event/button").c_str(), p[0] ? "long" : "press");
       break;
+    // The knob changed a setting this end also keeps. Store and publish, but do
+    // NOT send it back — the device is already showing it, and echoing would
+    // race the next local change.
+    case proto::Msg::EventFont:
+      if (len >= 1 && p[0] < kFontCount) {
+        fontId = p[0];
+        prefs.begin("scopeclock", false); prefs.putUChar("font", fontId); prefs.end();
+        mqtt.publish(topic("font/state").c_str(), kFontNames[fontId], true);
+      }
+      break;
+    case proto::Msg::EventWobble:
+      if (len >= 1) {
+        wobbleOn = p[0] != 0;
+        prefs.begin("scopeclock", false); prefs.putUChar("wobble", wobbleOn ? 1 : 0); prefs.end();
+        mqtt.publish(topic("wobble/state").c_str(), wobbleOn ? "ON" : "OFF", true);
+      }
+      break;
     case proto::Msg::EventScale:
       // The knob changed a face's size. The device is already showing it; all
       // this end has to do is remember.

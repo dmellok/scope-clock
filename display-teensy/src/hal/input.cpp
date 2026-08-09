@@ -7,6 +7,8 @@
 #include "protocol.h"     // shared/
 #include "state.h"
 #include "vector.h"
+#include "menu.h"
+#include "settime.h"
 #include <Arduino.h>
 
 namespace {
@@ -85,13 +87,14 @@ void encIsr() {
 // but classified on release so a long hold can be told apart from a tap.
 constexpr uint8_t  kDebouncePolls = 3;
 constexpr uint32_t kLongPressMs   = 800;
-// Keep holding past the size gesture and you get the clock setter. An
+// Keep holding past the size gesture and you get the settings menu. An
 // escalating hold rather than a new gesture because the knob only has two
 // controls and both already mean something; 1.7s past the first threshold is
 // far too long to reach by accident, and the display says which mode you are in.
-constexpr uint32_t kSetTimeMs     = 2500;
+constexpr uint32_t kMenuMs        = 2500;
 constexpr uint32_t kScaleIdleMs   = 8000;   // scale mode gives the knob back
 constexpr uint32_t kTimeIdleMs    = 30000;  // abandoned edit expires UNCOMMITTED
+constexpr uint32_t kMenuIdleMs    = 25000;  // and so does an abandoned menu
 uint8_t  butHist    = 0;
 bool     butDown    = false;
 bool     longSent   = false;
@@ -135,18 +138,30 @@ void poll(DeviceState& dev) {
     dev.scaleMode = false;
   // An abandoned edit leaves the clock alone. Committing a half-set time
   // because someone walked away would be worse than the drift being fixed.
-  if (dev.timeMode && (int32_t)(millis() - dev.timeModeUntilMs) >= 0)
-    dev.timeMode = false;
+  if (dev.edit != DeviceState::Edit::None &&
+      (int32_t)(millis() - dev.editUntilMs) >= 0)
+    dev.edit = DeviceState::Edit::None;
+  if (dev.menuMode && (int32_t)(millis() - dev.menuUntilMs) >= 0)
+    dev.menuMode = false;
 
-  if (detents != 0 && dev.timeMode) {
+  if (detents != 0 && dev.edit != DeviceState::Edit::None) {
     // Wrapping, so a field can be reached from either direction — nobody wants
-    // to turn a knob 55 clicks forward to go back five.
-    const int lim = dev.timeField == 0 ? 24 : 60;
-    int v = (int)dev.timeEdit[dev.timeField] + detents;
-    v %= lim;
-    if (v < 0) v += lim;
-    dev.timeEdit[dev.timeField] = (uint8_t)v;
-    dev.timeModeUntilMs = millis() + kTimeIdleMs;
+    // to turn a knob 55 clicks forward to go back five. The range is asked for
+    // rather than assumed, because February is not 31 days long.
+    int lo = 0, hi = 59;
+    editRange(dev, dev.editField, lo, hi);
+    const int span = hi - lo + 1;
+    int v = (int)dev.editVal[dev.editField] - lo + detents;
+    v %= span;
+    if (v < 0) v += span;
+    dev.editVal[dev.editField] = (uint8_t)(v + lo);
+    clampDay(dev);                    // a month change can strand the day
+    dev.editUntilMs = millis() + kTimeIdleMs;
+  } else if (detents != 0 && dev.menuMode) {
+    int v = ((int)dev.menuItem + detents) % (int)Menu::kCount;
+    if (v < 0) v += Menu::kCount;
+    dev.menuItem = (uint8_t)v;
+    dev.menuUntilMs = millis() + kMenuIdleMs;
   } else if (detents != 0 && dev.scaleMode) {
     // Adjusting the size of the face in front of you, not choosing another one.
     // Bounds-checked rather than wrapped: the modulo meant a face past
@@ -188,31 +203,40 @@ void poll(DeviceState& dev) {
       sendButton(1);                                 // long, reported on hold
     }
     if (butDown && longSent && !setSent &&
-        (millis() - butDownMs) >= kSetTimeMs) {
+        (millis() - butDownMs) >= kMenuMs) {
       setSent = true;
       dev.scaleMode = false;        // undo the toggle above; different job
-      dev.timeMode  = true;
-      dev.timeField = 0;
-      dev.timeSeed  = true;         // the main loop owns the RTC, not this
-      dev.timeCommit = false;
-      dev.timeModeUntilMs = millis() + kTimeIdleMs;
+      dev.edit      = DeviceState::Edit::None;
+      dev.menuMode  = true;
+      dev.menuItem  = 0;
+      dev.menuUntilMs = millis() + kMenuIdleMs;
       dev.mode = Mode::Face;
     }
   } else {
     if (butDown && !longSent) {
       // A tap is the way out of scale mode, so nobody has to wait for the
       // timeout or hold the button again to get their knob back.
-      if (dev.timeMode) {
-        // Hours, minutes, seconds, then commit — so the last tap is what sets
-        // the clock, and seconds land on a beat you choose rather than on
-        // whatever the RTC happened to be showing when you started.
-        if (dev.timeField < 2) {
-          ++dev.timeField;
-          dev.timeModeUntilMs = millis() + kTimeIdleMs;
+      if (dev.edit != DeviceState::Edit::None) {
+        // Three fields, then commit — so the last tap is what sets the clock,
+        // and seconds land on a beat you choose rather than on whatever the RTC
+        // happened to be showing when you started.
+        if (dev.editField < 2) {
+          ++dev.editField;
+          dev.editUntilMs = millis() + kTimeIdleMs;
         } else {
-          dev.timeCommit = true;
-          dev.timeMode   = false;
+          dev.editCommit     = true;
+          dev.editCommitDate = dev.edit == DeviceState::Edit::Date;
+          dev.edit           = DeviceState::Edit::None;
         }
+      }
+      else if (dev.menuMode) {
+        Menu::activate(dev);
+        // Arm every timeout the entry might just have started. Size mode in
+        // particular reads a deadline it did not set, and an unarmed one is
+        // already in the past — it would expire on the next poll.
+        dev.menuUntilMs      = millis() + kMenuIdleMs;
+        dev.editUntilMs      = millis() + kTimeIdleMs;
+        dev.scaleModeUntilMs = millis() + kScaleIdleMs;
       }
       else if (dev.scaleMode) dev.scaleMode = false;
       else                    dev.faceId = faces::nextVariant(dev.faceId);
