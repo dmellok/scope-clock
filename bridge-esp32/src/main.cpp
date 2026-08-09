@@ -1475,6 +1475,20 @@ void loop() {
   // (offset moves from unknown to real), summer time starting or ending, and the
   // timezone being edited on the config page. An hourly timer covered only the
   // middle one, and left a wrong world clock on screen for up to an hour.
+  // One proactive re-announce shortly after boot.
+  //
+  // By far the commonest cause of a wedged link is this bridge having just
+  // restarted — an OTA, a config save — and in that case the deaf detector's
+  // path is 30s of boot blackout, then 30s before the device counts as deaf,
+  // then up to 60s of rate limiting. Two minutes of blank tube waiting to
+  // rediscover something we already know happened. If nothing has been heard
+  // from the display 12s in, reset the peripheral once and let it re-enumerate.
+  static bool bootKick = false;
+  if (!bootKick && millis() > 12000 && !rxHello && !haveStatus) {
+    bootKick = true;
+    usbPeripheralReset();
+  }
+
   static int lastZoneOff = INT32_MIN;
   if (zonesJson.length() && time(nullptr) >= 1000000000L) {
     const int off = localUtcOffsetMin();

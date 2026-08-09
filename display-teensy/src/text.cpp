@@ -289,7 +289,91 @@ const int16_t* const Font[] =
 
 constexpr int kSegLen = 7;   // values per segment
 
-inline const int16_t* glyph(char ch) { return Font[(ch & 0x7f) - 32]; }
+// --- katakana ---------------------------------------------------------------
+// A second page of the font, at codes 0xA0 and up, because the matrix rain
+// wanted the characters the film actually used and this font is ASCII.
+//
+// Katakana suit a stroke font unusually well: they are two to four straight
+// strokes each, which is exactly what this format stores, where hiragana or
+// kanji would need curves it cannot draw and detail the tube cannot resolve.
+// These are drawn to be RECOGNISABLE at 120 units tall rather than
+// calligraphically correct — a reader of Japanese would call them crude.
+//
+// Same 0..20 cell as the Latin page, terminated by 0x80 | advance.
+const int16_t KA_a[]   = { lin,1,17,10,17,6,13,  lin,8,17,3,3,6,13, 0x8c };
+const int16_t KA_i[]   = { lin,9,19,3,11,6,13,   lin,6,15,6,1,6,13, 0x8c };
+const int16_t KA_u[]   = { lin,5,20,5,16,6,13,   lin,1,16,10,16,6,13,
+                           lin,1,16,1,10,6,13,   lin,10,16,7,2,6,13, 0x8c };
+const int16_t KA_e[]   = { lin,1,17,10,17,6,13,  lin,5,17,5,4,6,13,
+                           lin,0,4,11,4,6,13, 0x8c };
+const int16_t KA_o[]   = { lin,1,15,10,15,6,13,  lin,7,19,7,4,6,13,
+                           lin,7,9,2,3,6,13, 0x8c };
+const int16_t KA_ka[]  = { lin,1,15,9,15,6,13,   lin,5,19,5,7,6,13,
+                           lin,5,7,2,3,6,13,     lin,9,15,9,7,6,13, 0x8c };
+const int16_t KA_ki[]  = { lin,1,16,10,16,6,13,  lin,1,10,10,10,6,13,
+                           lin,6,20,5,2,6,13, 0x8c };
+const int16_t KA_ku[]  = { lin,2,18,9,18,6,13,   lin,9,18,4,3,6,13,
+                           lin,2,18,2,14,6,13, 0x8c };
+const int16_t KA_ke[]  = { lin,2,19,2,12,6,13,   lin,1,15,10,15,6,13,
+                           lin,7,15,4,3,6,13, 0x8c };
+const int16_t KA_ko[]  = { lin,1,17,10,17,6,13,  lin,10,17,10,5,6,13,
+                           lin,1,5,10,5,6,13, 0x8c };
+const int16_t KA_sa[]  = { lin,1,14,10,14,6,13,  lin,3,19,3,8,6,13,
+                           lin,8,19,8,8,6,13,    lin,6,14,6,2,6,13, 0x8c };
+const int16_t KA_shi[] = { lin,1,17,3,15,6,13,   lin,1,11,3,9,6,13,
+                           lin,2,4,9,12,6,13, 0x8c };
+const int16_t KA_su[]  = { lin,1,17,10,17,6,13,  lin,10,17,3,3,6,13,
+                           lin,6,9,10,3,6,13, 0x8c };
+const int16_t KA_se[]  = { lin,1,14,10,14,6,13,  lin,4,19,4,5,6,13,
+                           lin,4,5,10,4,6,13, 0x8c };
+const int16_t KA_so[]  = { lin,2,18,4,15,6,13,   lin,8,19,4,3,6,13, 0x8c };
+const int16_t KA_ta[]  = { lin,2,18,9,18,6,13,   lin,9,18,4,3,6,13,
+                           lin,4,12,8,7,6,13, 0x8c };
+const int16_t KA_chi[] = { lin,2,19,9,17,6,13,   lin,1,12,10,12,6,13,
+                           lin,6,17,5,2,6,13, 0x8c };
+const int16_t KA_tsu[] = { lin,1,18,3,15,6,13,   lin,5,18,7,15,6,13,
+                           lin,9,19,5,3,6,13, 0x8c };
+const int16_t KA_te[]  = { lin,2,19,9,19,6,13,   lin,1,14,10,14,6,13,
+                           lin,6,14,5,2,6,13, 0x8c };
+const int16_t KA_to[]  = { lin,4,20,4,2,6,13,    lin,4,12,9,8,6,13, 0x8c };
+const int16_t KA_na[]  = { lin,1,15,10,15,6,13,  lin,7,20,5,2,6,13, 0x8c };
+const int16_t KA_ni[]  = { lin,2,15,9,15,6,13,   lin,1,5,10,5,6,13, 0x8c };
+const int16_t KA_nu[]  = { lin,1,17,10,17,6,13,  lin,8,17,3,3,6,13,
+                           lin,4,10,9,3,6,13, 0x8c };
+const int16_t KA_ne[]  = { lin,5,20,5,17,6,13,   lin,1,15,10,15,6,13,
+                           lin,6,15,3,3,6,13,    lin,6,11,9,7,6,13, 0x8c };
+const int16_t KA_no[]  = { lin,9,19,2,3,6,13, 0x8c };
+const int16_t KA_ha[]  = { lin,4,18,1,3,6,13,    lin,6,18,10,3,6,13, 0x8c };
+const int16_t KA_hi[]  = { lin,3,19,3,5,6,13,    lin,3,12,8,13,6,13,
+                           lin,3,5,10,4,6,13, 0x8c };
+const int16_t KA_fu[]  = { lin,1,17,10,17,6,13,  lin,10,17,4,3,6,13, 0x8c };
+const int16_t KA_he[]  = { lin,1,8,6,14,6,13,    lin,6,14,11,5,6,13, 0x8c };
+const int16_t KA_ho[]  = { lin,1,13,10,13,6,13,  lin,6,19,6,3,6,13,
+                           lin,6,9,2,3,6,13,     lin,6,9,10,3,6,13, 0x8c };
+const int16_t KA_ma[]  = { lin,1,17,10,17,6,13,  lin,10,17,4,7,6,13,
+                           lin,3,11,8,5,6,13, 0x8c };
+const int16_t KA_mi[]  = { lin,1,17,8,15,6,13,   lin,1,11,8,9,6,13,
+                           lin,1,4,8,2,6,13, 0x8c };
+
+// Codes 0xA0..0xBF.
+const int16_t* const Kana[] = {
+  KA_a, KA_i, KA_u, KA_e, KA_o,  KA_ka, KA_ki, KA_ku, KA_ke, KA_ko,
+  KA_sa, KA_shi, KA_su, KA_se, KA_so,  KA_ta, KA_chi, KA_tsu, KA_te, KA_to,
+  KA_na, KA_ni, KA_nu, KA_ne, KA_no,  KA_ha, KA_hi, KA_fu, KA_he, KA_ho,
+  KA_ma, KA_mi
+};
+constexpr int kKanaCount = (int)(sizeof(Kana) / sizeof(Kana[0]));
+
+// One lookup for both pages, so every text path — faces, pushed scenes, the
+// ticker — gets katakana without knowing they exist.
+inline const int16_t* glyph(char ch) {
+  const uint8_t c = (uint8_t)ch;
+  if (c >= 0xA0) {
+    const int i = c - 0xA0;
+    return Kana[i < kKanaCount ? i : 0];
+  }
+  return Font[(c & 0x7f) - 32];
+}
 
 // SetScale(): derive the scaled metrics for a given scale factor.
 struct Metrics { int chrHt, kern, rowGap; };
@@ -306,9 +390,13 @@ Metrics metrics(int scale) {
 // original drops one kern in that case so a row has n-1 gaps, not n.
 int strWidth(int scale, const char* s, bool& newline) {
   int cells = 0, count = 0;
-  char ch = 0;
+  // UNSIGNED, and it matters. `char` is unsigned on the Teensy and signed on the
+  // host the sim builds for, so a katakana code of 0xA0 compares as 160 on the
+  // device and as -96 in the sim — the tube would draw the rain and the sim
+  // would measure it as an empty string. Same in drawString below.
+  uint8_t ch = 0;
   if (s) {
-    while ((ch = *s++) >= 0x20) {
+    while ((ch = (uint8_t)*s++) >= 0x20) {
       const int16_t* seg = glyph(ch);
       while (*seg < 0x80) seg += kSegLen;   // skip segments, land on the width
       cells += *seg & 0x7f;
@@ -316,7 +404,7 @@ int strWidth(int scale, const char* s, bool& newline) {
     }
   }
   const Metrics m = metrics(scale);
-  newline = (ch == '\n');
+  newline = (ch == (uint8_t)'\n');
   return cells * scale + m.kern * (newline ? count - 1 : count);
 }
 
@@ -329,8 +417,8 @@ void drawString(int x, int y, int scale, const char* s) {
   const Metrics m = metrics(scale);
   int penX = x;
 
-  for (char ch = *s++; ch >= 0x20; ch = *s++) {
-    const int16_t* seg = glyph(ch);
+  for (uint8_t ch = (uint8_t)*s++; ch >= 0x20; ch = (uint8_t)*s++) {
+    const int16_t* seg = glyph((char)ch);
     for (;;) {
       const int16_t v = *seg++;
       if (v >= 0x80) {                       // end flag: low bits are the width

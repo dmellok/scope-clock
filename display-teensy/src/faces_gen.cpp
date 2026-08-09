@@ -250,9 +250,15 @@ void matrix(const ClockState&, DrawList& d) {
   // topmost ink grazing 1199.
   constexpr int R    = 1185;              // the working radius of the face
   constexpr int32_t R2 = (int32_t)R * R;
-  // Katakana is what the film used and this font has none, so: digits and the
-  // angular half of the alphabet, which keeps the texture busy and legible.
-  static const char kGlyphs[] = "0123456789ABCDEFHJKLMNPRSTVWXYZ*+=<>/\\|";
+  // What the film used: half-width katakana, with digits mixed in as it also
+  // did. The font grew a katakana page for this — they are two to four straight
+  // strokes each, which is exactly what a stroke font stores, where hiragana
+  // would need curves it cannot draw.
+  static const char kGlyphs[] =
+    "\xA0\xA1\xA2\xA3\xA4\xA5\xA6\xA7\xA8\xA9"
+    "\xAA\xAB\xAC\xAD\xAE\xAF\xB0\xB1\xB2\xB3"
+    "\xB4\xB5\xB6\xB7\xB8\xB9\xBA\xBB\xBC\xBD\xBE\xBF"
+    "0123456789";
   constexpr int NG = (int)(sizeof(kGlyphs) - 1);
 
   static int16_t headY[COLS], speed[COLS], colX[COLS], halfH[COLS];

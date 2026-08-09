@@ -113,6 +113,15 @@ clone it alongside.
   Same shape as the RTC: the host supplies truth, the device keeps time against
   it. `gauges` is deliberately generic — n labelled percentages and a footer,
   nothing about where they came from — so any topic can drive it.
+- **`char` is UNSIGNED on the Teensy and SIGNED on the sim's host.** The font's
+  walk loops compared `char >= 0x20`, which accepts a katakana code of 0xA0 on
+  the device (160) and rejects it in the sim (-96) — the tube would have drawn
+  the rain while the harness measured an empty string. Both loops in text.cpp
+  use uint8_t now. Anything above 0x7F in a string is exposed to this.
+- **The font has a second page at 0xA0: 32 katakana.** They suit a stroke font —
+  two to four straight strokes each — where hiragana would need curves it cannot
+  draw. Reached through the same `glyph()` lookup, so faces, pushed scenes and
+  the ticker all get them without knowing.
 - **Never send a time-derived value before the clock is set.** `sendZones()` ran
   on Hello, which happens well before NTP lands, so every delta was measured
   against an offset of zero — i.e. the raw UTC offset — and Auckland read 22:40
