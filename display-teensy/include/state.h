@@ -51,6 +51,22 @@ struct DeviceState {
   bool      scaleMode = false;      // knob is adjusting scale, not choosing faces
   uint32_t  scaleModeUntilMs = 0;
 
+  // Setting the clock from the knob, with nothing else attached.
+  //
+  // The RTC holds local time and the bridge is the only other thing that can
+  // write it, so without this a clock with no bridge cannot be corrected at
+  // all — not for drift, not for a flat backup cell, and not for summer time.
+  // That made "the clock is autonomous" not quite true.
+  //
+  // Seeding and committing are flagged rather than done here: the RTC belongs
+  // to the main loop, and hal::input has no business knowing it exists.
+  bool      timeMode   = false;
+  uint8_t   timeField  = 0;         // 0 hour, 1 minute, 2 second
+  uint8_t   timeEdit[3] = {0, 0, 0};
+  bool      timeSeed   = false;     // fill timeEdit from the RTC
+  bool      timeCommit = false;     // write timeEdit to the RTC
+  uint32_t  timeModeUntilMs = 0;
+
   DeviceState() { for (uint8_t i = 0; i < kMaxFaces; ++i) faceScale[i] = kDefaultScale; }
 
   DrawList  pushed;             // host-authored list when mode == Pushed

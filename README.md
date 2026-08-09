@@ -76,6 +76,22 @@ X-Y mode does (a fifth is the 3:2 figure), and `midichord` shows the sounding
 pitch classes as a shape on the chromatic wheel. `tools/play_midi.py --demo`
 walks the intervals if there is no keyboard to hand.
 
+### Without the bridge
+
+The clock is autonomous: all 46 faces live on the Teensy and render from the
+DS3232, the knob and button work locally, and nothing in boot or the render loop
+waits on the link. Unplug the bridge and it keeps time and keeps drawing.
+
+**Hold the knob's button for 2.5 seconds to set the clock** — past the 0.8s that
+enters size mode. Turn for hours, tap, minutes, tap, seconds, tap to commit; walk
+away and it expires after 30s without changing anything.
+
+What the bridge adds is NTP (and therefore summer time, which the device never
+reasons about), persistence for the per-face sizes and the other settings, the
+five host-fed faces — `weather`, `ticker`, `worldclock`, `nowplaying`, `gauges` —
+and everything networked: MQTT, Home Assistant, pushed scenes and the config
+page.
+
 The bridge also serves a config page at `http://scope-clock-bridge.local/`
 (guarded by the OTA password) for setting Wi-Fi, MQTT and timezone without
 rebuilding.

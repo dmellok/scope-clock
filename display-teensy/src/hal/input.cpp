@@ -85,10 +85,17 @@ void encIsr() {
 // but classified on release so a long hold can be told apart from a tap.
 constexpr uint8_t  kDebouncePolls = 3;
 constexpr uint32_t kLongPressMs   = 800;
+// Keep holding past the size gesture and you get the clock setter. An
+// escalating hold rather than a new gesture because the knob only has two
+// controls and both already mean something; 1.7s past the first threshold is
+// far too long to reach by accident, and the display says which mode you are in.
+constexpr uint32_t kSetTimeMs     = 2500;
 constexpr uint32_t kScaleIdleMs   = 8000;   // scale mode gives the knob back
+constexpr uint32_t kTimeIdleMs    = 30000;  // abandoned edit expires UNCOMMITTED
 uint8_t  butHist    = 0;
 bool     butDown    = false;
 bool     longSent   = false;
+bool     setSent    = false;
 uint32_t butDownMs  = 0;
 
 void sendButton(uint8_t kind) {   // 0 = press, 1 = long
@@ -126,8 +133,21 @@ void poll(DeviceState& dev) {
   // beyond the size changing.
   if (dev.scaleMode && (int32_t)(millis() - dev.scaleModeUntilMs) >= 0)
     dev.scaleMode = false;
+  // An abandoned edit leaves the clock alone. Committing a half-set time
+  // because someone walked away would be worse than the drift being fixed.
+  if (dev.timeMode && (int32_t)(millis() - dev.timeModeUntilMs) >= 0)
+    dev.timeMode = false;
 
-  if (detents != 0 && dev.scaleMode) {
+  if (detents != 0 && dev.timeMode) {
+    // Wrapping, so a field can be reached from either direction — nobody wants
+    // to turn a knob 55 clicks forward to go back five.
+    const int lim = dev.timeField == 0 ? 24 : 60;
+    int v = (int)dev.timeEdit[dev.timeField] + detents;
+    v %= lim;
+    if (v < 0) v += lim;
+    dev.timeEdit[dev.timeField] = (uint8_t)v;
+    dev.timeModeUntilMs = millis() + kTimeIdleMs;
+  } else if (detents != 0 && dev.scaleMode) {
     // Adjusting the size of the face in front of you, not choosing another one.
     // Bounds-checked rather than wrapped: the modulo meant a face past
     // kMaxFaces adjusted a different face's size while showing its own.
@@ -167,17 +187,41 @@ void poll(DeviceState& dev) {
       dev.mode = Mode::Face;
       sendButton(1);                                 // long, reported on hold
     }
+    if (butDown && longSent && !setSent &&
+        (millis() - butDownMs) >= kSetTimeMs) {
+      setSent = true;
+      dev.scaleMode = false;        // undo the toggle above; different job
+      dev.timeMode  = true;
+      dev.timeField = 0;
+      dev.timeSeed  = true;         // the main loop owns the RTC, not this
+      dev.timeCommit = false;
+      dev.timeModeUntilMs = millis() + kTimeIdleMs;
+      dev.mode = Mode::Face;
+    }
   } else {
     if (butDown && !longSent) {
       // A tap is the way out of scale mode, so nobody has to wait for the
       // timeout or hold the button again to get their knob back.
-      if (dev.scaleMode) dev.scaleMode = false;
-      else               dev.faceId = faces::nextVariant(dev.faceId);
+      if (dev.timeMode) {
+        // Hours, minutes, seconds, then commit — so the last tap is what sets
+        // the clock, and seconds land on a beat you choose rather than on
+        // whatever the RTC happened to be showing when you started.
+        if (dev.timeField < 2) {
+          ++dev.timeField;
+          dev.timeModeUntilMs = millis() + kTimeIdleMs;
+        } else {
+          dev.timeCommit = true;
+          dev.timeMode   = false;
+        }
+      }
+      else if (dev.scaleMode) dev.scaleMode = false;
+      else                    dev.faceId = faces::nextVariant(dev.faceId);
       dev.mode = Mode::Face;
       sendButton(0);                                 // tap, reported on release
     }
     butHist = 0;
     butDown = false;
+    setSent = false;
   }
 }
 

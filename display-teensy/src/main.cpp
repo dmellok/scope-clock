@@ -14,6 +14,7 @@
 #include "hal/audio.h"
 #include "hal/watchdog.h"
 #include "notify.h"
+#include "settime.h"
 #include "debug.h"
 
 static ClockState  clk;
@@ -74,6 +75,24 @@ void loop() {
 
   hal::link::poll(dev, clk);     // 1. host commands in (non-blocking)
   hal::input::poll(dev);         // 2. encoder/button out
+
+  // The knob asked to set the clock. The RTC lives here, not in hal::input, so
+  // seeding the editor and committing it are done on this side of the fence.
+  if (dev.timeSeed) {
+    dev.timeSeed = false;
+    hal::rtc::read(clk);
+    dev.timeEdit[0] = (uint8_t)clk.hour;
+    dev.timeEdit[1] = (uint8_t)clk.minute;
+    dev.timeEdit[2] = (uint8_t)clk.second;
+  }
+  if (dev.timeCommit) {
+    dev.timeCommit = false;
+    hal::rtc::read(clk);                  // keep the date, replace the time
+    clk.hour   = dev.timeEdit[0];
+    clk.minute = dev.timeEdit[1];
+    clk.second = dev.timeEdit[2];
+    hal::rtc::write(clk);
+  }
   hal::midi::poll();             // 2b. USB-MIDI in (bounded drain, front jack)
   vec::tickWobble();             // 2c. anti-burn-in drift, all modes
 
@@ -137,6 +156,7 @@ void loop() {
     scaleList(frame, dev.faceId < DeviceState::kMaxFaces
                        ? dev.faceScale[dev.faceId] : DeviceState::kDefaultScale);
   overlayNotify(dev, frame);     // 5. notification on top, already positioned
+  overlaySetTime(dev, frame);    //    ...and the clock setter over everything
 
   vec::setBrightness(dev.brightness);
   const uint32_t drawStart = micros();

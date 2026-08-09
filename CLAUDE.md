@@ -238,6 +238,18 @@ clone it alongside.
   brightness. And anything in device units that must stay on the glass has to sit
   at or under 1200 (the notification strips were at 1215, which was inside the
   old field and outside this one).
+- **The knob can set the clock, and that is what makes it standalone.** The RTC
+  holds local time and the bridge was the only thing that could write it, so a
+  clock with no bridge could not be corrected for drift, a flat backup cell or
+  summer time — "the clock is autonomous" was not quite true. The gesture
+  escalates off the one that already existed: 800ms enters size mode, keep
+  holding to 2.5s and it drops size mode and enters the setter (hours, minutes,
+  seconds; turn to change, tap for the next field, the last tap commits). An
+  abandoned edit expires after 30s WITHOUT committing — a half-set clock is
+  worse than the drift. `settime.cpp` REPLACES the frame rather than overlaying
+  it, because you have to see which field the knob is on before you turn it.
+  Seeding and committing are flags on DeviceState: the RTC belongs to the main
+  loop, and `hal::input` has no business knowing it exists.
 - **The per-face size table must be at least as long as the registry.** It was
   `kMaxFaces = 32` while there were 46 faces, and nothing failed loudly: the
   device indexed it `faceScale[faceId % kMaxFaces]`, so the atom (face 34)
