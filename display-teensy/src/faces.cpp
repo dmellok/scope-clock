@@ -41,7 +41,9 @@ RenderFn kFaces[] = {
   solar, moon, weather,
   pong, life,
   // clocks and text
-  trailclock, ticker,
+  trailclock, ticker, worldclock,
+  // arcade
+  asteroids,
 };
 
 // Contiguous runs of kFaces above. Keep the two in step.
@@ -59,7 +61,8 @@ const Family kFamilies[] = {
   { 34, 1 },   // science: Bohr atom
   { 35, 3 },   // sky:     solar system, moon, weather
   { 38, 2 },   // games:   pong, life
-  { 40, 2 },   // extra:   trail clock, ticker
+  { 40, 3 },   // extra:   trail clock, ticker, world clock
+  { 43, 1 },   // arcade:  asteroids
 };
 constexpr uint8_t kFamilyCount = sizeof(kFamilies) / sizeof(kFamilies[0]);
 

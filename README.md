@@ -33,7 +33,7 @@ or the CLI:
 
 ## Status
 
-**The roadmap is complete and running on hardware.** Forty-two built-in faces
+**The roadmap is complete and running on hardware.** Forty-four built-in faces
 draw from the DS3232; the ESP32 bridge disciplines the RTC from NTP over a
 USB-host link with no wiring; the host can push arbitrary vector scenes,
 banners, and *face templates* that keep telling the time on their own; and the

@@ -462,7 +462,8 @@ static const FaceEntry kFaces[] = {
   {"atom","Science"},
   {"solar","Sky"}, {"moon","Sky"}, {"weather","Sky"},
   {"pong","Games"}, {"life","Games"},
-  {"trailclock","Extra"}, {"ticker","Extra"},
+  {"trailclock","Extra"}, {"ticker","Extra"}, {"worldclock","Extra"},
+  {"asteroids","Arcade"},
 };
 // Everything downstream still wants a plain name by index.
 static const char* faceName(uint8_t i) { return kFaces[i].name; }
@@ -546,6 +547,56 @@ static void sendWeather(int16_t t10, uint8_t sky, const String& place, const Str
   for (uint16_t i = 0; i < detail.length() && n < proto::MAX_PAYLOAD; ++i)
     p[n++] = (uint8_t)detail[i];
   sendFrame(proto::Msg::SetWeather, p, (uint8_t)n);
+}
+
+// This bridge's own offset from UTC, in minutes, right now — which is where DST
+// enters and then leaves the story. The device is told deltas relative to LOCAL
+// time, so it never learns that timezones exist (hard rule 4).
+static int localUtcOffsetMin() {
+  const time_t now = time(nullptr);
+  if (now < 1000000000L) return 0;
+  struct tm lt, gt;
+  localtime_r(&now, &lt);
+  gmtime_r(&now, &gt);
+  int d = (lt.tm_hour - gt.tm_hour) * 60 + (lt.tm_min - gt.tm_min);
+  const int dd = lt.tm_yday - gt.tm_yday;
+  // Across a date boundary the day numbers differ by one, or by a year's worth
+  // on 31 December, which is the case that catches people out.
+  if (dd == 1 || dd < -1) d += 1440;
+  else if (dd == -1 || dd > 1) d -= 1440;
+  return d;
+}
+
+// The zone list as the host gave it, kept so it can be re-sent: an offset that
+// was right in June is wrong in December, and the device has no way to know.
+static String zonesJson;
+
+static void sendZones() {
+  if (!zonesJson.length()) return;
+  const int local = localUtcOffsetMin();
+  uint8_t p[proto::MAX_PAYLOAD];
+  uint16_t at = 1;
+  uint8_t n = 0;
+  int from = 0;
+  while (n < 5) {
+    const int lb = zonesJson.indexOf("\"label\"", from);
+    if (lb < 0) break;
+    const int ob = zonesJson.indexOf("\"offset\"", lb);
+    if (ob < 0) break;
+    const String label = jsonField(zonesJson.substring(lb), "label");
+    const int off = jsonField(zonesJson.substring(ob), "offset").toInt();
+    const int16_t delta = (int16_t)(off - local);
+    const uint8_t ll = (uint8_t)(label.length() > 13 ? 13 : label.length());
+    if (at + 3 + ll > proto::MAX_PAYLOAD) break;
+    p[at++] = (uint8_t)(delta & 0xFF);
+    p[at++] = (uint8_t)((delta >> 8) & 0xFF);
+    p[at++] = ll;
+    for (uint8_t i = 0; i < ll; ++i) p[at++] = (uint8_t)label[i];
+    ++n;
+    from = ob + 8;
+  }
+  p[0] = n;
+  if (n) sendFrame(proto::Msg::SetZones, p, (uint8_t)at);
 }
 
 static void sendTicker(const String& text) {
@@ -717,6 +768,11 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
                              skyCode(b > 0 ? msg.substring(a + 1, b) : msg.substring(a + 1)),
                              b > 0 ? msg.substring(b + 1) : String(), String());
     }
+  } else if (tp == topic("zones/set")) {
+    // {"zones":[{"label":"LONDON","offset":60},...]}  offset is minutes from UTC.
+    zonesJson = msg;
+    prefs.begin("scopeclock", false); prefs.putString("zones", zonesJson); prefs.end();
+    sendZones();
   } else if (tp == topic("ticker/set")) {
     sendTicker(msg);
   } else if (tp == topic("element/set")) {
@@ -797,6 +853,11 @@ static void publishDiscovery() {
       + "\"options\":[" + opts + "],"
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
   mqtt.publish((String("homeassistant/select/") + cfg.mqttPrefix + "/face/config").c_str(), j.c_str(), true);
+
+  j = String("{\"name\":\"World clock zones\",\"uniq_id\":\"" MQTT_PREFIX "_zones\",")
+      + "\"cmd_t\":\"" + topic("zones/set") + "\",\"ic\":\"mdi:earth\","
+      + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+  mqtt.publish((String("homeassistant/notify/") + cfg.mqttPrefix + "/zones/config").c_str(), j.c_str(), true);
 
   j = String("{\"name\":\"Ticker\",\"uniq_id\":\"" MQTT_PREFIX "_ticker\",")
       + "\"cmd_t\":\"" + topic("ticker/set") + "\",\"ic\":\"mdi:text-long\","
@@ -902,6 +963,7 @@ static void mqttConnect() {
   statusFresh = true;                 // republish everything on this connection
   if (cfg.npTopic.length())    mqtt.subscribe(cfg.npTopic.c_str());
   if (cfg.gaugeTopic.length()) mqtt.subscribe(cfg.gaugeTopic.c_str());
+  mqtt.subscribe(topic("zones/set").c_str());
   mqtt.subscribe(topic("weather/set").c_str());
   mqtt.subscribe(topic("ticker/set").c_str());
   mqtt.subscribe(topic("element/set").c_str());
@@ -1027,6 +1089,7 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
       sendScales();
       sendWobble();
       sendElement();
+      sendZones();
       break;
     case proto::Msg::Status: {
       if (len < sizeof(proto::StatusPayload)) break;
@@ -1313,6 +1376,7 @@ void setup() {
   autoNowPlaying = prefs.getUChar("autonp", 1) != 0;
   wobbleOn       = prefs.getUChar("wobble", 1) != 0;
   atomZ          = prefs.getUChar("atomz", 0);
+  zonesJson      = prefs.getString("zones", "");
   if (atomZ > 118) atomZ = 0;
   prefs.end();
 
@@ -1394,6 +1458,11 @@ void loop() {
   // that out on its own RTC — which is the entire point of it keeping time.
   ArduinoOTA.handle();
   scaleSaveTick();     // lazy NVS write; the knob emits one event per detent
+
+  // Re-send the zone deltas every hour. Nothing on the device knows about
+  // summer time, so when a zone shifts this is the only thing that corrects it.
+  static uint32_t zoneAt = 0;
+  if (millis() - zoneAt > 3600000UL) { zoneAt = millis(); sendZones(); }
 
   mqttConnect();
   mqtt.loop();

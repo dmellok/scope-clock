@@ -32,6 +32,7 @@ enum class Msg : uint8_t {
   SetElement     = 0x10,   // atom face: atomic number, 0 = cycle
   SetWeather     = 0x11,   // temperature, sky code, place, detail
   SetTicker      = 0x12,   // marquee text
+  SetZones       = 0x13,   // world clock: offsets from LOCAL time
   // device -> host
   Hello          = 0x81,   // fw version, caps, panel size
   Pong           = 0x82,
@@ -120,6 +121,11 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 //                sky 0 clear, 1 part cloud, 2 cloud, 3 rain, 4 snow,
 //                5 storm, 6 fog. Few on purpose: a vector tube can draw
 //                those distinctly and cannot draw twenty.
+// SetZones     [n:u8] then n x [deltaMin:i16][labelLen:u8][label]
+//                deltaMin is minutes to ADD TO LOCAL TIME, not to UTC. The
+//                host owns every question about summer time and re-sends
+//                when an offset changes; the device never learns that
+//                timezones exist. See hard rule 4.
 // SetTicker    [chars...]   marquee text, to the end of the payload.
 // SetElement   [z:u8]    1..118 pins the atom face to one element; 0 cycles.
 // SetWobble    [on:u8]   continuous slow drift of the whole image, which

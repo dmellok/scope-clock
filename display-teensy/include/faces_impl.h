@@ -53,6 +53,8 @@ void life(const ClockState&, DrawList&);       // Conway, drawn as runs
 void trailclock(const ClockState&, DrawList&); // hands with a phosphor wake
 void weather(const ClockState&, DrawList&);    // host-fed
 void ticker(const ClockState&, DrawList&);     // host-fed marquee
+void worldclock(const ClockState&, DrawList&); // host-fed zone offsets
+void asteroids(const ClockState&, DrawList&);  // plays itself
 
 // --- wireframes (faces_wire.cpp) --------------------------------------------
 void teapot(const ClockState&, DrawList&);     // the Utah teapot, as a profile

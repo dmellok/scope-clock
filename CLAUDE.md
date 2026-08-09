@@ -113,6 +113,15 @@ clone it alongside.
   Same shape as the RTC: the host supplies truth, the device keeps time against
   it. `gauges` is deliberately generic — n labelled percentages and a footer,
   nothing about where they came from — so any topic can drive it.
+- **The world clock never learns what a timezone is.** The host sends deltas in
+  minutes relative to the DEVICE'S LOCAL TIME, not to UTC, so the device only
+  ever adds a number. The bridge computes its own UTC offset from localtime vs
+  gmtime (watch the year-end case, where tm_yday differs by ~365) and re-sends
+  hourly, which is the only thing that corrects a zone when summer time shifts.
+  That is hard rule 4 honoured rather than worked around.
+- **An Item keeps the char* it is handed — one buffer per row, always.** This has
+  now bitten twice: every gauge label identical, then every world-clock row
+  showing the same city. If a face formats N strings it needs N buffers.
 - **The sim needs a CLOCK.** `fake/Arduino.h` had `millis()` return 0, so the
   ticker rendered an empty window and measured as a two-item face; the
   notification expiry, now-playing progress and the wobble were all frozen too.

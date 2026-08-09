@@ -10,6 +10,7 @@
 #include "vector.h"
 #include "text.h"
 #include "hostdata.h"
+#include "zones.h"
 #include <Arduino.h>
 #include <stdio.h>
 
@@ -388,6 +389,177 @@ void ticker(const ClockState&, DrawList& d) {
   // A rule above and below, so a lone line of text does not float.
   d.line(-1050, 320, 1050, 320);
   d.line(-1050, -420, 1050, -420);
+}
+
+// ---- world clock -----------------------------------------------------------
+// Local time large, other zones beneath it. The device adds a number of minutes
+// and nothing more: the host owns every question about summer time, which is
+// what keeps timezone tables off an MCU that would have no way to update them.
+void worldclock(const ClockState& c, DrawList& d) {
+  const zones::Set& z = zones::get();
+  // One buffer PER ROW. An Item keeps the char* it is handed rather than copying,
+  // so a single shared buffer leaves every row pointing at whichever was
+  // formatted last — five identical lines. The gauges face was bitten by exactly
+  // this, and the comment there did not stop it happening again here.
+  static char big[8], row[zones::kMax][28];
+
+  const int lh = c.hr12 ? to12(c.hour) : c.hour;
+  snprintf(big, sizeof big, "%d:%02d", lh, c.minute);
+  d.text(-txt::inkWidth(20, big) / 2, 560, 20, big);
+  d.line(-820, 470, 820, 470);
+
+  if (!z.valid || !z.count) {
+    static const char* kNo = "NO ZONES SET";
+    d.text(-txt::inkWidth(8, kNo) / 2, 100, 8, kNo);
+    return;
+  }
+
+  const int32_t localMin = (int32_t)c.hour * 60 + c.minute;
+  for (uint8_t i = 0; i < z.count; ++i) {
+    // Wrapped into a day the long way round, because a delta can be negative
+    // and C's % keeps the sign of the dividend.
+    int32_t m = (localMin + z.z[i].deltaMin) % 1440;
+    if (m < 0) m += 1440;
+    // A marker for zones that are not on today's date here — the thing a world
+    // clock is actually for, and invisible without it.
+    const int32_t roll = localMin + z.z[i].deltaMin;
+    const char* mark = roll < 0 ? "-" : (roll >= 1440 ? "+" : " ");
+    snprintf(row[i], sizeof row[i], "%-9s %02d:%02d%s",
+             z.z[i].label, (int)(m / 60), (int)(m % 60), mark);
+    const int y = 210 - i * 300;
+    d.text(-txt::inkWidth(9, row[i]) / 2, y, 9, row[i]);
+  }
+}
+
+// ---- asteroids -------------------------------------------------------------
+// It plays itself: the ship turns towards whatever is nearest, fires on a timer,
+// and thrusts when it is drifting into something. Rocks are irregular polygons
+// rather than circles, because a circle reads as a planet and the jagged
+// silhouette is most of what makes the game recognisable.
+void asteroids(const ClockState&, DrawList& d) {
+  // The wrap edge must leave room for a rock's own radius, or the biggest ones
+  // straddle it and draw 145 units past the glass. 950 + 210 keeps everything
+  // inside the 1195 a face may use.
+  constexpr int32_t FIELD = 950;
+  constexpr int kRocks = 11, kShots = 4;
+  struct Rock { int32_t x, y, vx, vy; int16_t r; uint8_t live, shape; };
+  struct Shot { int32_t x, y, vx, vy; int16_t life; };
+
+  static Rock rock[kRocks];
+  static Shot shot[kShots];
+  static int32_t sx = 0, sy = 0, svx = 0, svy = 0;
+  static int sang = 0, fire = 0;
+  static bool seeded = false;
+
+  auto spawn = [&](int i, int32_t x, int32_t y, int16_t r) {
+    rock[i].x = x; rock[i].y = y; rock[i].r = r;
+    rock[i].vx = (int32_t)(xrM() % 15) - 7;
+    rock[i].vy = (int32_t)(xrM() % 15) - 7;
+    rock[i].shape = (uint8_t)(xrM() & 0xFF);
+    rock[i].live = 1;
+  };
+  auto wave = [&]() {
+    for (int i = 0; i < kRocks; ++i) rock[i].live = 0;
+    for (int i = 0; i < 5; ++i)
+      spawn(i, (int32_t)(xrM() % 1700) - 850, (int32_t)(xrM() % 1700) - 850, 200);
+  };
+  if (!seeded) { wave(); seeded = true; }
+
+  auto wrap = [&](int32_t& v) { if (v > FIELD) v = -FIELD; else if (v < -FIELD) v = FIELD; };
+
+  // Aim at the nearest rock, and thrust away from it when it is close — enough
+  // behaviour to look deliberate, far short of actually playing well.
+  int32_t best = 0x7fffffff; int bi = -1;
+  for (int i = 0; i < kRocks; ++i) {
+    if (!rock[i].live) continue;
+    const int32_t dx = rock[i].x - sx, dy = rock[i].y - sy;
+    const int32_t q = dx * dx / 64 + dy * dy / 64;
+    if (q < best) { best = q; bi = i; }
+  }
+  if (bi < 0) wave();
+  else {
+    const int32_t dx = rock[bi].x - sx, dy = rock[bi].y - sy;
+    // Coarse angle from the sign and ratio, which avoids an atan2 in the frame
+    // path; a turret that lags slightly looks better than one that snaps.
+    int want = 0;
+    for (int a = 0; a < vec::kSteps; a += 16) {
+      if ((int64_t)dx * vec::sinT(a) + (int64_t)dy * vec::cosT(a) >
+          (int64_t)dx * vec::sinT(want) + (int64_t)dy * vec::cosT(want)) want = a;
+    }
+    int diff = ((want - sang + vec::kSteps + vec::kSteps / 2) & (vec::kSteps - 1)) - vec::kSteps / 2;
+    sang = (sang + (diff > 0 ? 6 : -6)) & (vec::kSteps - 1);
+    if (best < 90000) { svx -= (int32_t)(vec::sinT(sang) >> 13); svy -= (int32_t)(vec::cosT(sang) >> 13); }
+  }
+  svx = svx * 63 / 64; svy = svy * 63 / 64;        // drag, so it does not run away
+  sx += svx; sy += svy; wrap(sx); wrap(sy);
+
+  if (++fire > 22) {
+    fire = 0;
+    for (int i = 0; i < kShots; ++i)
+      if (shot[i].life <= 0) {
+        shot[i].x = sx; shot[i].y = sy; shot[i].life = 70;
+        shot[i].vx = (int32_t)(vec::sinT(sang) >> 11);
+        shot[i].vy = (int32_t)(vec::cosT(sang) >> 11);
+        break;
+      }
+  }
+
+  for (int i = 0; i < kShots; ++i) {
+    if (shot[i].life <= 0) continue;
+    shot[i].life--;
+    shot[i].x += shot[i].vx; shot[i].y += shot[i].vy;
+    wrap(shot[i].x); wrap(shot[i].y);
+    for (int j = 0; j < kRocks; ++j) {
+      if (!rock[j].live) continue;
+      const int32_t dx = (shot[i].x - rock[j].x) / 8, dy = (shot[i].y - rock[j].y) / 8;
+      const int32_t rr = rock[j].r / 8;
+      if (dx * dx + dy * dy > rr * rr) continue;
+      shot[i].life = 0;
+      rock[j].live = 0;
+      // Split, until they are too small to split again.
+      if (rock[j].r > 90) {
+        int made = 0;
+        for (int k = 0; k < kRocks && made < 2; ++k)
+          if (!rock[k].live) { spawn(k, rock[j].x, rock[j].y, (int16_t)(rock[j].r / 2)); ++made; }
+      }
+      break;
+    }
+    if (shot[i].life > 0) d.line((int)shot[i].x, (int)shot[i].y,
+                                 (int)(shot[i].x - shot[i].vx * 3), (int)(shot[i].y - shot[i].vy * 3));
+  }
+
+  for (int i = 0; i < kRocks; ++i) {
+    if (!rock[i].live) continue;
+    rock[i].x += rock[i].vx; rock[i].y += rock[i].vy;
+    wrap(rock[i].x); wrap(rock[i].y);
+    constexpr int kV = 10;
+    int lx = 0, ly = 0;
+    for (int v = 0; v <= kV; ++v) {
+      const int a = (v % kV) * vec::kSteps / kV;
+      // Radius jittered per vertex from the rock's shape byte. Hashed rather
+      // than read a bit at a time: one bit gives two radii and draws diamonds,
+      // where eight levels gives something that looks broken off.
+      const uint32_t h = (uint32_t)rock[i].shape * 2654435761u + (uint32_t)(v % kV) * 40503u;
+      const int32_t j = rock[i].r * (66 + (int32_t)((h >> 13) & 7) * 5) / 100;
+      const int x = (int)(rock[i].x + ((j * vec::cosT(a)) >> 16));
+      const int y = (int)(rock[i].y + ((j * vec::sinT(a)) >> 16));
+      if (v) d.line(lx, ly, x, y);
+      lx = x; ly = y;
+    }
+  }
+
+  // The ship: a triangle with a notched tail, which is the shape everyone knows.
+  const int32_t cs = vec::cosT(sang), sn = vec::sinT(sang);
+  auto pt = [&](int32_t fx, int32_t fy, int& ox, int& oy) {
+    ox = (int)(sx + ((fx * cs + fy * sn) >> 16));
+    oy = (int)(sy + ((fy * cs - fx * sn) >> 16));
+  };
+  int ax, ay, bx, by, cx2, cy2, dx2, dy2;
+  pt(0, 130, ax, ay); pt(-80, -90, bx, by); pt(0, -40, cx2, cy2); pt(80, -90, dx2, dy2);
+  d.line(ax, ay, bx, by);
+  d.line(bx, by, cx2, cy2);
+  d.line(cx2, cy2, dx2, dy2);
+  d.line(dx2, dy2, ax, ay);
 }
 
 }}  // namespace faces::impl
