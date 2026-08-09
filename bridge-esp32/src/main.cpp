@@ -116,6 +116,74 @@ static void cfgPanic() {
 // device would drop it on the CRC. Use Serial0/UART or a network log instead.
 #define TO_DISPLAY Serial
 
+// ---- protocol trace ---------------------------------------------------------
+// A ring of the last frames in BOTH directions, so the link can be watched from
+// the config page instead of inferred from symptoms. This is the view that
+// makes a one-way failure obvious at a glance: frames leaving with nothing
+// coming back, or Status arriving while nothing we send is acknowledged.
+//
+// Capture is a memcpy and a counter, nothing else. Decoding to text costs far
+// more than storing the bytes, so it happens when the page asks rather than in
+// the path that has to keep up with the link.
+struct TraceEntry {
+  uint32_t ms;
+  uint32_t seq;
+  uint8_t  dir;      // 0 = host -> device, 1 = device -> host
+  uint8_t  id;
+  uint8_t  len;      // true payload length
+  uint8_t  n;        // bytes actually kept
+  uint8_t  data[24];
+};
+constexpr uint8_t kTraceCap = 96;
+static TraceEntry trace[kTraceCap];
+static uint8_t  traceHead = 0;
+static uint32_t traceSeq  = 0;
+
+static void traceAdd(uint8_t dir, uint8_t id, const uint8_t* p, uint8_t len) {
+  TraceEntry& e = trace[traceHead];
+  traceHead = (uint8_t)((traceHead + 1) % kTraceCap);
+  e.ms = millis(); e.seq = ++traceSeq;
+  e.dir = dir; e.id = id; e.len = len;
+  e.n = len > sizeof e.data ? (uint8_t)sizeof e.data : len;
+  if (e.n && p) memcpy(e.data, p, e.n);
+}
+
+static const char* msgName(uint8_t id) {
+  switch ((proto::Msg)id) {
+    case proto::Msg::SetTime:       return "SetTime";
+    case proto::Msg::SetMode:       return "SetMode";
+    case proto::Msg::PushList:      return "PushList";
+    case proto::Msg::Banner:        return "Banner";
+    case proto::Msg::SetBrightness: return "SetBrightness";
+    case proto::Msg::SetHz:         return "SetHz";
+    case proto::Msg::Ping:          return "Ping";
+    case proto::Msg::PushBegin:     return "PushBegin";
+    case proto::Msg::PushChunk:     return "PushChunk";
+    case proto::Msg::PushCommit:    return "PushCommit";
+    case proto::Msg::Notify:        return "Notify";
+    case proto::Msg::SetScales:     return "SetScales";
+    case proto::Msg::SetNowPlaying: return "SetNowPlaying";
+    case proto::Msg::SetGauges:     return "SetGauges";
+    case proto::Msg::SetWobble:     return "SetWobble";
+    case proto::Msg::SetElement:    return "SetElement";
+    case proto::Msg::SetWeather:    return "SetWeather";
+    case proto::Msg::SetTicker:     return "SetTicker";
+    case proto::Msg::SetZones:      return "SetZones";
+    case proto::Msg::SetFont:       return "SetFont";
+    case proto::Msg::SetConstell:   return "SetConstell";
+    case proto::Msg::SetAlign:      return "SetAlign";
+    case proto::Msg::Hello:         return "Hello";
+    case proto::Msg::Pong:          return "Pong";
+    case proto::Msg::EventEncoder:  return "EventEncoder";
+    case proto::Msg::EventButton:   return "EventButton";
+    case proto::Msg::Status:        return "Status";
+    case proto::Msg::EventScale:    return "EventScale";
+    case proto::Msg::EventFont:     return "EventFont";
+    case proto::Msg::EventWobble:   return "EventWobble";
+  }
+  return "unknown";
+}
+
 static void sendFrame(proto::Msg id, const uint8_t* p, uint8_t len) {
   // Wait for room rather than overrun the ring.
   //
@@ -136,6 +204,7 @@ static void sendFrame(proto::Msg id, const uint8_t* p, uint8_t len) {
   TO_DISPLAY.write(len);
   if (len) TO_DISPLAY.write(p, len);
   TO_DISPLAY.write(proto::frameCrc((uint8_t)id, len, p));   // must match the device
+  traceAdd(0, (uint8_t)id, p, len);
 }
 
 // ---- send: draw lists and banners -------------------------------------------
@@ -1210,6 +1279,7 @@ static void publishStatus(const proto::StatusPayload& s) {
 }
 
 static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
+  traceAdd(1, id, p, len);
   switch (static_cast<proto::Msg>(id)) {
     case proto::Msg::Hello:
       rxHello = true;
@@ -1406,6 +1476,113 @@ static void handleApi() {
     usbPeripheralReset();
   }
   web.send(200, "text/plain", "ok");
+}
+
+// A line of plain English per frame. Kept free of quotes and backslashes by
+// construction so it needs no JSON escaping on the way out.
+static String msgSummary(const TraceEntry& e) {
+  const uint8_t* d = e.data;
+  const uint8_t n = e.n;
+  auto u16 = [&](uint8_t i) { return (uint16_t)(d[i] | (d[i + 1] << 8)); };
+  auto i16 = [&](uint8_t i) { return (int16_t)u16(i); };
+  char b[96];
+  switch ((proto::Msg)e.id) {
+    case proto::Msg::SetTime:
+      if (n >= 6) { snprintf(b, sizeof b, "20%02u-%02u-%02u %02u:%02u:%02u",
+                             d[0], d[1], d[2], d[3], d[4], d[5]); return b; }
+      break;
+    case proto::Msg::Status:
+      if (n >= 16) {
+        const uint16_t silent = u16(12);
+        snprintf(b, sizeof b, "up %lus, frame %luus, %uHz, face %u, silent %s",
+                 (unsigned long)(d[0] | (d[1] << 8) | ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24)),
+                 (unsigned long)(d[4] | (d[5] << 8) | ((uint32_t)d[6] << 16) | ((uint32_t)d[7] << 24)),
+                 u16(8), n > 15 ? d[15] : 0,
+                 silent == 0xFFFF ? "never" : String(silent).c_str());
+        return b;
+      }
+      break;
+    case proto::Msg::EventEncoder:
+      if (n >= 1) { snprintf(b, sizeof b, "%+d detent", (int)(int8_t)d[0]); return b; }
+      break;
+    case proto::Msg::EventButton:
+      if (n >= 1) return d[0] ? "long press" : "tap";
+      break;
+    case proto::Msg::EventScale:
+      if (n >= 2) { snprintf(b, sizeof b, "face %u -> %u%%", d[0], d[1]); return b; }
+      break;
+    case proto::Msg::EventFont:
+    case proto::Msg::SetFont:
+      if (n >= 1) { snprintf(b, sizeof b, "typeface %u (%s)", d[0],
+                             d[0] < kFontCount ? kFontNames[d[0]] : "?"); return b; }
+      break;
+    case proto::Msg::EventWobble:
+    case proto::Msg::SetWobble:
+      if (n >= 1) return d[0] ? "drift on" : "drift off";
+      break;
+    case proto::Msg::SetAlign:
+      if (n >= 4) { snprintf(b, sizeof b, "x %+d, y %+d", i16(0), i16(2)); return b; }
+      break;
+    case proto::Msg::SetMode:
+      if (n >= 2) { snprintf(b, sizeof b, "mode %u, face %u (%s)", d[0], d[1],
+                             d[1] < kFaceCount ? faceName(d[1]) : "?"); return b; }
+      break;
+    case proto::Msg::SetBrightness:
+      if (n >= 1) { snprintf(b, sizeof b, "%u", d[0]); return b; }
+      break;
+    case proto::Msg::SetHz:
+      if (n >= 1) { snprintf(b, sizeof b, "%u Hz", d[0]); return b; }
+      break;
+    case proto::Msg::SetElement:
+      if (n >= 1) { snprintf(b, sizeof b, "Z %u%s", d[0], d[0] ? "" : " (cycle)"); return b; }
+      break;
+    case proto::Msg::SetConstell:
+      if (n >= 1) { snprintf(b, sizeof b, "%s", conName(d[0]).c_str()); return b; }
+      break;
+    case proto::Msg::SetScales:
+      if (n >= 1) { snprintf(b, sizeof b, "%u faces", d[0]); return b; }
+      break;
+    case proto::Msg::SetZones:
+      if (n >= 1) { snprintf(b, sizeof b, "%u zones", d[0]); return b; }
+      break;
+    case proto::Msg::Hello:
+      snprintf(b, sizeof b, "device announced, %u bytes", e.len); return b;
+    default:
+      break;
+  }
+  snprintf(b, sizeof b, "%u byte payload", e.len);
+  return b;
+}
+
+
+// The trace, newest last, limited to what the page has not seen. `after` is the
+// sequence number of the last entry it holds, so a poll normally returns the
+// handful of frames since the previous one rather than the whole ring.
+static void handleProto() {
+  if (!webAuthed()) return;
+  const uint32_t after = web.hasArg("after") ? (uint32_t)strtoul(web.arg("after").c_str(), nullptr, 10) : 0;
+  String j = "{\"seq\":" + String(traceSeq) + ",\"f\":[";
+  bool first = true;
+  for (uint8_t k = 0; k < kTraceCap; ++k) {
+    // Walk oldest to newest from just past the head, so order is chronological.
+    const TraceEntry& e = trace[(traceHead + k) % kTraceCap];
+    if (!e.seq || e.seq <= after) continue;
+    if (!first) j += ',';
+    first = false;
+    String hex;
+    for (uint8_t i = 0; i < e.n; ++i) {
+      char h[4]; snprintf(h, sizeof h, "%02x", e.data[i]);
+      if (i) hex += ' ';
+      hex += h;
+    }
+    if (e.n < e.len) hex += " ...";
+    j += "{\"q\":" + String(e.seq) + ",\"t\":" + String(e.ms)
+       + ",\"d\":" + String(e.dir) + ",\"id\":" + String(e.id)
+       + ",\"n\":\"" + msgName(e.id) + "\",\"l\":" + String(e.len)
+       + ",\"x\":\"" + hex + "\",\"s\":\"" + msgSummary(e) + "\"}";
+  }
+  j += "]}";
+  web.send(200, "application/json", j);
 }
 
 static void handleRoot() {
@@ -1610,6 +1787,7 @@ void loop() {
     web.on("/api/font", HTTP_POST, handleApi);
     web.on("/api/constell", HTTP_POST, handleApi);
     web.on("/api/align", HTTP_POST, handleApi);
+    web.on("/api/proto", HTTP_GET, handleProto);
     // Fetched once when the page loads rather than folded into /api/state,
     // which is polled: 88 names is a kilobyte that never changes.
     web.on("/api/constells", HTTP_GET, []() {

@@ -336,6 +336,15 @@ clone it alongside.
   `-D` defines are silently DROPPED if appended from a *post* script; verify
   they reached the ELF rather than trusting a green build.
 
+- **The link can be WATCHED now, not inferred.** The bridge keeps a 96-frame
+  ring of both directions (`traceAdd` off the single `sendFrame`/`onFrame` choke
+  points) and the page polls `/api/proto?after=<seq>` with a cursor, so a poll
+  normally returns the two or three frames since the last one. Capture is a
+  memcpy and a counter; the decoding to English costs more than storing the
+  bytes, so it happens when the page asks. This is the view that makes the
+  one-way failure obvious — arrows going one way only — rather than something
+  you deduce from `linkSilentS` after the tube has already stopped updating.
+
 ## Verifying without eyes on the tube
 
 Two habits that have caught real bugs repeatedly, both worth continuing:

@@ -91,6 +91,11 @@ away from expires after 30s without changing anything.
 A setting is in that menu if changing it means something with no bridge
 attached. Wi-Fi, MQTT and the rest stay on the config page.
 
+The config page carries a **link trace**: every frame between the two MCUs in
+both directions, decoded, newest last. Both arrows moving means the link is
+healthy; only inbound moving is the one-way failure this hardware is prone to,
+and it shows there before any symptom reaches the tube.
+
 The config page also has **centring**, which shifts the whole image on top of
 the trimmer pots inside the case, and a **target** face of concentric rings to
 set it against. The outer ring sits on the tube's usable radius, so it should

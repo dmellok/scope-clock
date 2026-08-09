@@ -120,6 +120,14 @@ body.offline .wrap{opacity:.55;transition:opacity .2s}
 @media(min-width:820px){.builder{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 .tools{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-bottom:9px}
 .tools button{padding:5px 9px;font-size:12px}
+#trace{font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:19rem;
+  overflow-y:auto;background:var(--bg);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px}
+#trace div{white-space:pre-wrap;word-break:break-word}
+#trace .tx{color:var(--accent)}
+#trace .rx{color:var(--text)}
+#trace .t{color:var(--muted)}
+#trace .b{color:var(--muted);font-size:11px}
 .tools button.on{border-color:rgba(61,220,132,.5);color:var(--accent);background:rgba(61,220,132,.12)}
 .mini{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}
 .mini input[type=number]{width:3.6rem;padding:4px 6px;font-size:12px;margin:0}
@@ -325,6 +333,24 @@ D -430 -1215 9 %H:%M:%S"></textarea>
     else looks healthy. Relink resets the bridge's USB peripheral and the device
     restarts itself, which recovers it without touching the clock — give it a
     couple of minutes.</p>
+</section>
+
+<section class="span2">
+  <h2><svg class="i"><use href="#i-pulse"/></svg>Link trace</h2>
+  <div class="row" style="margin-bottom:8px">
+    <button id="tr-pause">pause</button>
+    <button id="tr-clear">clear</button>
+    <label class="mini"><input type="checkbox" id="tr-hb" checked>hide Status heartbeat</label>
+    <span class="sp"></span>
+    <label class="mini"><input type="checkbox" id="tr-hex">show bytes</label>
+  </div>
+  <div id="trace"></div>
+  <p class="hint">Every frame in both directions, newest at the bottom.
+    <b>&rarr;</b> is the bridge talking to the clock, <b>&larr;</b> the clock
+    talking back. Both flowing means the link is healthy; only <b>&larr;</b>
+    moving is the one-way failure described above, and you will see it here
+    before any symptom reaches the tube. The ring holds the last 96 frames and
+    keeps the first 24 bytes of each.</p>
 </section>
 
 </div>
@@ -842,6 +868,40 @@ function poll(){
     setDot("bad","bridge unreachable");
   });
 }
+// ---- link trace ----------------------------------------------------------
+// Polled with a cursor rather than re-fetched whole: normally this returns the
+// two or three frames since the last poll.
+var trSeq=0, trPaused=false, trRows=[];
+function trRender(){
+  var hideHb=el("tr-hb").checked, hex=el("tr-hex").checked, box=el("trace");
+  var atEnd=box.scrollTop+box.clientHeight>=box.scrollHeight-24;
+  box.innerHTML=trRows.filter(function(r){return !(hideHb&&r.n=="Status")})
+    .slice(-300).map(function(r){
+      var arrow=r.d?"&larr;":"&rarr;";
+      var t=(r.t/1000).toFixed(2);
+      var line='<div><span class="t">'+t+'</span> <span class="'+(r.d?"rx":"tx")+'">'
+        +arrow+" "+r.n+"</span> <span class=\"t\">"+r.s+"</span>";
+      if(hex&&r.x)line+='<br><span class="b">      '+r.x+"</span>";
+      return line+"</div>"}).join("");
+  if(atEnd)box.scrollTop=box.scrollHeight;
+}
+function trPoll(){
+  if(trPaused)return;
+  fetch("/api/proto?after="+trSeq).then(function(r){return r.json()}).then(function(j){
+    if(j.seq<trSeq){trSeq=0;trRows=[]}          // bridge restarted, counter reset
+    if(j.f&&j.f.length){
+      j.f.forEach(function(r){trRows.push(r);trSeq=r.q});
+      if(trRows.length>400)trRows=trRows.slice(-400);
+      trRender();
+    }
+  }).catch(function(){});
+}
+el("tr-pause").onclick=function(){trPaused=!trPaused;
+  this.textContent=trPaused?"resume":"pause"};
+el("tr-clear").onclick=function(){trRows=[];trRender()};
+el("tr-hb").onchange=trRender; el("tr-hex").onchange=trRender;
+trPoll();setInterval(trPoll,1500);
+
 poll();setInterval(poll,2000);
 </script></body></html>
 )HTMLPAGE";
