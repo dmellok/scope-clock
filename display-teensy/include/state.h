@@ -1,4 +1,5 @@
-// state.h — owned state structs. Replaces the ~100 loose globals of the original.
+// state.h — owned state structs. Replaces the loose file-scope state of the
+// original, which the multi-.ino layout spread across every tab.
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <stdint.h>

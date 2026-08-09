@@ -339,8 +339,9 @@ since it is the only place untrusted bytes become a structure.
 
 1. **Nothing in the loop may block.** The main loop *is* the CRT refresh; a stall
    is visible flicker. All link/RTC/input calls stay non-blocking or time-bounded.
-   (The original's `userial.begin()` that "hangs if the splash screen is too big"
-   is the exact anti-pattern to avoid.)
+   (Upstream flags this against itself: `userial.begin()` carries the note
+   "This hangs if splash screen is too big, awaiting proper fix". Same hazard,
+   and the reason every link call here is time-bounded.)
 2. **State lives in structs** (`ClockState`, `DeviceState`) — do not reintroduce
    loose globals. That was the main thing the rewrite exists to fix.
 3. **Faces via the registry** (`faces.cpp`), never `if (mode == 0/1/2)`.
