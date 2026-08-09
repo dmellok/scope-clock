@@ -1617,8 +1617,17 @@ void loop() {
   // then up to 60s of rate limiting. Two minutes of blank tube waiting to
   // rediscover something we already know happened. If nothing has been heard
   // from the display 12s in, reset the peripheral once and let it re-enumerate.
+  //
+  // "Nothing heard" is not the only way this comes up wedged. The link fails
+  // ONE WAY: the device keeps talking and simply never hears us, which shows up
+  // as Status arriving normally with linkSilentS pinned at 0xFFFF. haveStatus
+  // is true in that case, so the fast kick above was skipped for exactly the
+  // fault it would have fixed, and recovery fell through to checkLink's 30s
+  // boot gate plus its 60s rate limit — up to a minute and a half of a link
+  // that looks dead and gives no sign of trying. Hence the second arm.
   static bool bootKick = false;
-  if (!bootKick && millis() > 12000 && !rxHello && !haveStatus) {
+  const bool neverHeardUs = haveStatus && lastStatus.linkSilentS == 0xFFFF;
+  if (!bootKick && millis() > 12000 && !rxHello && (!haveStatus || neverHeardUs)) {
     bootKick = true;
     usbPeripheralReset();
   }
