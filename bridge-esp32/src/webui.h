@@ -162,6 +162,26 @@ footer a:hover{text-decoration:underline}
       <span id="fscaleval" style="min-width:3.2rem;text-align:right">--</span>
     </label>
   </div>
+  <div class="row" style="margin-top:12px">
+    <label class="mini" style="flex:1;gap:9px">centre X
+      <input type="range" id="alx" min="-600" max="600" step="5" style="flex:1">
+      <span id="alxv" style="min-width:3.4rem;text-align:right">--</span>
+    </label>
+  </div>
+  <div class="row" style="margin-top:6px">
+    <label class="mini" style="flex:1;gap:9px">centre Y
+      <input type="range" id="aly" min="-600" max="600" step="5" style="flex:1">
+      <span id="alyv" style="min-width:3.4rem;text-align:right">--</span>
+    </label>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button id="altarget">show target</button>
+    <button id="alnudgexl">&larr;</button>
+    <button id="alnudgexr">&rarr;</button>
+    <button id="alnudgeyd">&darr;</button>
+    <button id="alnudgeyu">&uarr;</button>
+    <button id="alzero">centre</button>
+  </div>
   <p class="hint">Grouped the way the clock is: the knob walks between these
     families, the button walks the faces inside one. Either overrides whatever
     is pushed.<br>
@@ -171,6 +191,13 @@ footer a:hover{text-decoration:underline}
     the font's scale is a whole number and bottoms out. You can also set it
     at the clock: <b>hold the knob's button</b> to enter size mode, turn to
     adjust, tap to leave — it gives the knob back on its own after 8s.<br>
+    <b>Centring</b> shifts the whole image, in DAC counts, on top of the trimmer
+    pots inside the case, so the pots still work and this is the fine
+    adjustment. <b>Show target</b> puts up concentric rings at 1/3, 2/3 and the
+    full working radius: the outer ring should sit exactly on the glass, and the
+    cardinal ticks tell you which way it has moved if it does not. That face is
+    never resized by the size slider and holds the anti burn-in drift still
+    while it is up, because a reference that wanders is not a reference.<br>
     <b>Typeface</b> is used by every face that does not ask for a specific one,
     so the digital clock keeps its seven-segment numerals whatever you pick.
     <b>Element</b> pins the atom face to one of the 118 and <b>constellation</b>
@@ -750,6 +777,22 @@ fetch("/api/constells").then(function(r){return r.text()}).then(function(t){
   el("con").innerHTML='<option value="0">cycle</option>'+t.split("|").map(
     function(n,i){return '<option value="'+(i+1)+'">'+n+'</option>'}).join("")});
 el("con").onchange=function(){post("/api/constell",this.value)};
+// Centring. Both axes go in one message so the device never sees a half-applied
+// position, and the sliders are the source of truth for what gets sent.
+var alX=0, alY=0;
+function alShow(){el("alxv").textContent=alX;el("alyv").textContent=alY;
+  el("alx").value=alX;el("aly").value=alY}
+function alSend(){alShow();post("/api/align",alX+","+alY)}
+function alClamp(v){return Math.max(-600,Math.min(600,v))}
+el("alx").oninput=function(){alX=+this.value;alShow()};
+el("aly").oninput=function(){alY=+this.value;alShow()};
+el("alx").onchange=alSend; el("aly").onchange=alSend;
+el("alnudgexl").onclick=function(){alX=alClamp(alX-5);alSend()};
+el("alnudgexr").onclick=function(){alX=alClamp(alX+5);alSend()};
+el("alnudgeyd").onclick=function(){alY=alClamp(alY-5);alSend()};
+el("alnudgeyu").onclick=function(){alY=alClamp(alY+5);alSend()};
+el("alzero").onclick=function(){alX=0;alY=0;alSend()};
+el("altarget").onclick=function(){post("/api/face","align")};
 el("autonp").onchange=function(){post("/api/autonp",this.checked?"1":"0")};
 el("wobble").onchange=function(){post("/api/wobble",this.checked?"1":"0")};
 el("fscale").oninput=function(){el("fscaleval").textContent=this.value+"%"};
@@ -779,6 +822,8 @@ function poll(){
     if(s.elem!==undefined&&document.activeElement!==el("elem"))el("elem").value=s.elem;
     if(s.font!==undefined&&document.activeElement!==el("font"))el("font").value=s.font;
     if(s.con!==undefined&&document.activeElement!==el("con"))el("con").value=s.con;
+    if(s.alx!==undefined&&document.activeElement!==el("alx")
+       &&document.activeElement!==el("aly")){alX=s.alx;alY=s.aly;alShow()}
     if(document.activeElement!==el("fscale")&&s.scale!==undefined){
       el("fscale").value=s.scale; el("fscaleval").textContent=s.scale+"%"}
     el("s-mode").textContent=mn;

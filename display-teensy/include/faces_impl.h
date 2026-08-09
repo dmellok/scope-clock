@@ -83,6 +83,9 @@ const char* constellationName(uint8_t i);      // 0-based, for the host
 void midiscope(const ClockState&, DrawList&);  // the interval as an X-Y figure
 void midichord(const ClockState&, DrawList&);  // the chord as a shape on a wheel
 
+// --- setup (faces_align.cpp) ------------------------------------------------
+void align(const ClockState&, DrawList&);      // centring target, never scaled
+
 // --- shared helpers ---------------------------------------------------------
 inline int to12(int h) { return h == 0 ? 12 : (h > 12 ? h - 12 : h); }
 

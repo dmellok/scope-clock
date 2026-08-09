@@ -467,6 +467,7 @@ static const FaceEntry kFaces[] = {
   {"trailclock","Extra"}, {"ticker","Extra"}, {"worldclock","Extra"},
   {"asteroids","Arcade"},
   {"constell","Stars"}, {"starglobe","Stars"},
+  {"align","Setup"},
 };
 // Everything downstream still wants a plain name by index.
 static const char* faceName(uint8_t i) { return kFaces[i].name; }
@@ -530,6 +531,31 @@ static bool wobbleOn = true;          // anti-burn-in drift, persisted
 static uint8_t atomZ = 0;             // atom face: 0 cycles, 1..118 pins
 static uint8_t fontId = 0;            // default typeface, persisted
 static uint8_t conId  = 0;            // constellation chart: 0 cycles, 1..88 pins
+static int16_t alignX = 0, alignY = 0;  // whole-display centring, DAC counts
+
+static void sendAlign() {
+  const uint8_t p[4] = { (uint8_t)(alignX & 0xff), (uint8_t)((alignX >> 8) & 0xff),
+                         (uint8_t)(alignY & 0xff), (uint8_t)((alignY >> 8) & 0xff) };
+  sendFrame(proto::Msg::SetAlign, p, 4);
+}
+
+// "x,y" in DAC counts. Clamped here as well as on the device, so the value the
+// page reads back is the value that actually took effect.
+static void setAlignFrom(const String& in) {
+  const int comma = in.indexOf(',');
+  if (comma < 0) return;
+  long x = in.substring(0, comma).toInt();
+  long y = in.substring(comma + 1).toInt();
+  if (x < -600) x = -600;
+  if (x >  600) x =  600;
+  if (y < -600) y = -600;
+  if (y >  600) y =  600;
+  alignX = (int16_t)x; alignY = (int16_t)y;
+  prefs.begin("scopeclock", false);
+  prefs.putShort("alignx", alignX); prefs.putShort("aligny", alignY);
+  prefs.end();
+  sendAlign();
+}
 
 // The names arrive from tools/gen_stars.py as one pipe-separated string, so
 // picking one out is a walk rather than a table of 88 pointers.
@@ -1195,6 +1221,7 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
       sendZones();
       sendFont();
       sendConstellation();
+      sendAlign();
       break;
     case proto::Msg::Status: {
       if (len < sizeof(proto::StatusPayload)) break;
@@ -1279,6 +1306,8 @@ static void handleState() {
   j += "\"elem\":" + String(atomZ) + ",";
   j += "\"font\":" + String(fontId) + ",";
   j += "\"con\":" + String(conId) + ",";
+  j += "\"alx\":" + String(alignX) + ",";
+  j += "\"aly\":" + String(alignY) + ",";
   // The bridge's own UTC offset, which is what every zone delta is measured
   // against. Exposed because a wrong world clock looks identical to a wrong
   // zone list from the outside.
@@ -1331,6 +1360,8 @@ static void handleApi() {
     curBrightness = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
     const uint8_t p[1] = { curBrightness };
     sendFrame(proto::Msg::SetBrightness, p, 1);
+  } else if (uri.endsWith("/align")) {
+    setAlignFrom(body);
   } else if (uri.endsWith("/constell")) {
     setConstellationBy(body);
   } else if (uri.endsWith("/font")) {
@@ -1511,6 +1542,8 @@ void setup() {
   atomZ          = prefs.getUChar("atomz", 0);
   fontId         = prefs.getUChar("font", 0);
   conId          = prefs.getUChar("constel", 0);
+  alignX         = prefs.getShort("alignx", 0);
+  alignY         = prefs.getShort("aligny", 0);
   if (conId > SCOPE_CON_COUNT) conId = 0;
   if (fontId >= kFontCount) fontId = 0;
   zonesJson      = prefs.getString("zones", "");
@@ -1576,6 +1609,7 @@ void loop() {
     web.on("/api/brightness", HTTP_POST, handleApi);
     web.on("/api/font", HTTP_POST, handleApi);
     web.on("/api/constell", HTTP_POST, handleApi);
+    web.on("/api/align", HTTP_POST, handleApi);
     // Fetched once when the page loads rather than folded into /api/state,
     // which is polled: 88 names is a kilobyte that never changes.
     web.on("/api/constells", HTTP_GET, []() {

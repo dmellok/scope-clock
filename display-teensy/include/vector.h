@@ -37,6 +37,18 @@ int32_t cosT(int idx);
 // user's coarse centring, the screensaver a slow wander on top of it.
 void setTrim(int x, int y);        // analog centring pots
 
+// The host's centring offset, in DAC counts, on top of the pots. The pots are
+// inside the case; this is the same adjustment from the config page, and it is
+// additive so turning a pot still works. Persisted by the bridge.
+void setAlign(int x, int y);
+int  alignX();
+int  alignY();
+
+// Hold the anti-burn-in drift still without changing the user's setting. The
+// calibration target is a fixed reference, and aligning against something that
+// is itself wandering 45 counts round a circle is pointless.
+void holdWobble(bool held);
+
 // Beam dwell per dot, which IS brightness on a vector tube: the longer the beam
 // sits on a dot, the more energy the phosphor takes. 255 keeps the beam drawing
 // for nearly the whole refresh period; lower values finish sooner and leave the

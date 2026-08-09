@@ -46,6 +46,8 @@ RenderFn kFaces[] = {
   asteroids,
   // stars — real catalogue data, see stars.h
   constell, starglobe,
+  // setup — the centring target; see rawScale() below, it is never scaled
+  align,
 };
 
 // Contiguous runs of kFaces above. Keep the two in step.
@@ -66,8 +68,10 @@ const Family kFamilies[] = {
   { 40, 3 },   // extra:   trail clock, ticker, world clock
   { 43, 1 },   // arcade:  asteroids
   { 44, 2 },   // stars:   constellation chart, celestial globe
+  { 46, 1 },   // setup:   centring target
 };
 constexpr uint8_t kFamilyCount = sizeof(kFamilies) / sizeof(kFamilies[0]);
+
 
 // Each family remembers the variant you last left it on, so knobbing away and
 // back returns you to the dial you chose rather than resetting to the first.
@@ -81,6 +85,12 @@ uint8_t familyOf(uint8_t faceId) {
 }
 
 } // namespace
+// The calibration target is a measuring stick: the main loop must not apply the
+// per-face scale to it, or the rings stop meaning what they say. Located by
+// name so appending or reordering faces cannot point this at the wrong one.
+bool rawScale(uint8_t faceId) {
+  return faceId < count() && kFaces[faceId] == impl::align;
+}
 
 void     registerBuiltins() { /* static table for now */ }
 uint8_t  count() { return sizeof(kFaces) / sizeof(kFaces[0]); }

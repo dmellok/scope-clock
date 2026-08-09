@@ -63,6 +63,8 @@ int beamY = kMidDac;
 // stomp on the trim (and vice versa) when either updates.
 int trimX = 0, trimY = 0;
 int saveX = 0, saveY = 0;
+int alnX  = 0, alnY  = 0;   // host centring, DAC counts
+bool wobbleHeld = false;
 
 // --- beam dwell, i.e. brightness --------------------------------------------
 // On a vector CRT the brightness of a stroke is how long the beam sits on each
@@ -98,8 +100,8 @@ inline void dwell() {
   while ((ARM_DWT_CYCCNT - t0) < dotDwell) { /* hold the beam on this dot */ }
 }
 
-inline int toDacX(int x) { return x + trimX + saveX + kMidDac; }
-inline int toDacY(int y) { return y + trimY + saveY + kMidDac; }
+inline int toDacX(int x) { return x + trimX + saveX + alnX + kMidDac; }
+inline int toDacY(int y) { return y + trimY + saveY + alnY + kMidDac; }
 
 // How far the beam has to fly to reach (x,y), as the larger of the two axes.
 inline int travelTo(int x, int y) {
@@ -162,6 +164,20 @@ int32_t sinT(int idx) { return sintab[((idx % kSteps) + kSteps) % kSteps]; }
 int32_t cosT(int idx) { return costab[((idx % kSteps) + kSteps) % kSteps]; }
 
 void setTrim(int x, int y) { trimX = x; trimY = y; }
+
+// Clamped well inside the DAC: past this the image is off the glass whatever
+// else is right, so a bad value cannot lose the picture entirely.
+void setAlign(int x, int y) {
+  alnX = x < -600 ? -600 : (x > 600 ? 600 : x);
+  alnY = y < -600 ? -600 : (y > 600 ? 600 : y);
+}
+int alignX() { return alnX; }
+int alignY() { return alnY; }
+
+void holdWobble(bool held) {
+  wobbleHeld = held;
+  if (held) { saveX = 0; saveY = 0; }
+}
 
 void line(int x0, int y0, int x1, int y1) {
   x0 = sc(x0); y0 = sc(y0); x1 = sc(x1); y1 = sc(y1);
@@ -242,7 +258,7 @@ void setWobble(bool on) {
 bool wobble() { return wobbleOn; }
 
 void tickWobble() {
-  if (!wobbleOn) return;
+  if (!wobbleOn || wobbleHeld) return;
   constexpr int32_t kRadius = 45;
   constexpr uint32_t kMsPerStep = 234;      // 1024 steps -> ~4 minutes a lap
   const int a = (int)((millis() / kMsPerStep) & (kSteps - 1));

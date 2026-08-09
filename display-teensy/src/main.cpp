@@ -125,7 +125,10 @@ void loop() {
     hal::link::send(static_cast<uint8_t>(proto::Msg::EventWobble), &p, 1);
   }
   hal::midi::poll();             // 2b. USB-MIDI in (bounded drain, front jack)
-  vec::tickWobble();             // 2c. anti-burn-in drift, all modes
+  // 2c. anti-burn-in drift, all modes — except while the centring target is up,
+  // which is a fixed reference and useless if it wanders.
+  vec::holdWobble(dev.mode == Mode::Face && faces::rawScale(dev.faceId));
+  vec::tickWobble();
 
   // Audio mode hands the DACs to the audio DMA, so the changeover has to happen
   // exactly on the edge — starting it twice re-runs a 257ms ramp, and failing to
@@ -184,8 +187,9 @@ void loop() {
   if (dev.mode == Mode::Face)
     // Bounds-checked, not wrapped: the modulo this replaces turned an
     // out-of-range face into a silently wrong answer rather than a default.
-    scaleList(frame, dev.faceId < DeviceState::kMaxFaces
-                       ? dev.faceScale[dev.faceId] : DeviceState::kDefaultScale);
+    if (!faces::rawScale(dev.faceId))
+      scaleList(frame, dev.faceId < DeviceState::kMaxFaces
+                         ? dev.faceScale[dev.faceId] : DeviceState::kDefaultScale);
   overlayNotify(dev, frame);     // 5. notification on top, already positioned
   overlaySetTime(dev, frame);    //    ...the editor, and the menu, over
   overlayMenu(dev, frame);       //    everything else

@@ -41,6 +41,7 @@ enum class Msg : uint8_t {
   SetZones       = 0x13,   // world clock: offsets from LOCAL time
   SetFont        = 0x14,   // default typeface for text that does not name one
   SetConstell    = 0x15,   // constellation chart: pin one, or cycle
+  SetAlign       = 0x16,   // whole-display centring, in DAC counts
   // device -> host
   Hello          = 0x81,   // fw version, caps, panel size
   Pong           = 0x82,
@@ -140,6 +141,10 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 // SetConstell  [id:u8]   0 cycles every nine seconds, 1..88 pins one. The
 //                order is the device's sky::kCons, brightest figure first;
 //                bridge-esp32/src/constellations.h carries the same names.
+// SetAlign     [x:i16][y:i16]   centring offset in DAC counts, added on top
+//                of the internal pots rather than replacing them, so the pots
+//                still work. Clamped to +-600 by the device: past that the
+//                image is off the glass whatever else is right.
 // SetZones     [n:u8] then n x [deltaMin:i16][labelLen:u8][label]
 //                deltaMin is minutes to ADD TO LOCAL TIME, not to UTC. The
 //                host owns every question about summer time and re-sends

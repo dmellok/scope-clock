@@ -8,6 +8,11 @@ struct DrawList;
 struct DeviceState;
 
 namespace faces {
+
+// True for faces that must be drawn at their authored size, whatever the
+// per-face scale says. Only the centring target: it is a measuring stick.
+bool rawScale(uint8_t faceId);
+
   using RenderFn = void(*)(const ClockState&, DrawList&);
   void      registerBuiltins();
   RenderFn  current(const DeviceState& dev);

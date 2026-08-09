@@ -36,9 +36,9 @@ Physical (zero-hardware-mod route the owner chose):
 
 **P0–P4 are done and running on hardware.** The render engine, the NTP-
 disciplined RTC over a USB-host link, and the generic draw-list path all work.
-**46 faces** — dials, digital, the five Platonic solids, a tesseract, generative
-curves, digital rain, a real star chart and celestial globe, and two driven live
-by USB-MIDI — plus `PushList` / `Banner` / `SetMode` /
+**47 faces** — dials, digital, the five Platonic solids, a tesseract, generative
+curves, digital rain, a real star chart and celestial globe, a centring target,
+and two driven live by USB-MIDI — plus `PushList` / `Banner` / `SetMode` /
 `SetBrightness` / `SetHz` from the host, MQTT + Home Assistant discovery on the
 bridge, host-uploadable face templates, and a web config page.
 
@@ -283,6 +283,15 @@ clone it alongside.
   then touch the glass. The bridge owns the persistence (NVS, `fscale`) because
   the Teensy has nowhere to keep it, and re-sends the whole table on Hello.
   Long-press the knob's button on the clock to adjust the showing face by hand.
+- **A calibration target has to opt OUT of everything that moves it.** The
+  centring face draws rings at 400/800/1200 device units, the outer one landing
+  on the measured 1800-count rim, so "is it centred and how much glass am I
+  using" is answerable by looking. That only holds if nothing rescales or
+  shifts it: `faces::rawScale()` exempts it from the per-face size, and
+  `vec::holdWobble()` parks the anti-burn-in drift while it is up WITHOUT
+  touching the user's setting. A reference that is itself wandering 45 counts
+  round a circle is not a reference. `vec::setAlign()` is additive on top of the
+  internal trimmer pots rather than replacing them, so the pots still work.
 - **The tube is ROUND; the draw list is not.** An animation laid out in a
   rectangle spends beam time in the corners where there is no phosphor. The
   matrix face gives each column the chord the circle actually allows it —

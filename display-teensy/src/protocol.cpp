@@ -181,6 +181,12 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
       if (len >= 1) txt::setDefaultFace(payload[0]);
       break;
 
+    case proto::Msg::SetAlign:
+      if (len >= 4)
+        vec::setAlign((int16_t)(payload[0] | (payload[1] << 8)),
+                      (int16_t)(payload[2] | (payload[3] << 8)));
+      break;
+
     case proto::Msg::SetConstell:
       if (len >= 1) faces::impl::setConstellation(payload[0]);
       break;

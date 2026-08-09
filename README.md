@@ -33,7 +33,7 @@ or the CLI:
 
 ## Status
 
-**The roadmap is complete and running on hardware.** Forty-six built-in faces
+**The roadmap is complete and running on hardware.** Forty-seven built-in faces
 draw from the DS3232; the ESP32 bridge disciplines the RTC from NTP over a
 USB-host link with no wiring; the host can push arbitrary vector scenes,
 banners, and *face templates* that keep telling the time on their own; and the
@@ -90,6 +90,11 @@ away from expires after 30s without changing anything.
 
 A setting is in that menu if changing it means something with no bridge
 attached. Wi-Fi, MQTT and the rest stay on the config page.
+
+The config page also has **centring**, which shifts the whole image on top of
+the trimmer pots inside the case, and a **target** face of concentric rings to
+set it against. The outer ring sits on the tube's usable radius, so it should
+touch the glass all the way round when the picture is centred.
 
 What the bridge adds is NTP (and therefore summer time, which the device never
 reasons about), persistence for the per-face sizes and the other settings, the
