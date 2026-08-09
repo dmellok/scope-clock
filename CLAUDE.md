@@ -105,6 +105,26 @@ clone it alongside.
   to seat a card; there is nothing in there to read.
   The probe now refuses to run until the watchdog is armed (20s uptime), which
   turns that hang into a 2s reset instead of a dead clock needing a reflash.
+- **A dead link is usually a dead CABLE, and only a REPLUG fixes it.** Two hours
+  went on treating "no Status arriving" as a protocol wedge. It was not: the
+  Teensy's host port had never claimed a device and the ESP32 had never been
+  enumerated by anything. Neither `/api/relink` (a soft `SYSTEM_USB_DEVICE_RST`)
+  nor power-cycling the whole clock cleared it — only physically unplugging the
+  AtomS3U and pushing it back in. The likely reason is that a simultaneous cold
+  boot RACES: USBHost_t36 will not claim a device that was already sitting there
+  when its stack came up, and a replug into an already-running Teensy is the one
+  thing that gives it a clean attach event. Reflashing the Teensy and OTAing the
+  bridge back to back is the reliable way to land in it; leave ~30s between.
+  Ask both ends before theorising — they now answer. The device prints
+  `link down: no device claimed` once a second on the front-jack console while
+  its host port holds nothing, and `/api/state` carries `usb`, which is whether
+  the ESP32's own peripheral has been enumerated by anybody. Those two separate
+  the three cases the link trace cannot: wedged one way, wedged both ways, and
+  never connected.
+- **Do NOT retry the recovery kick on a fixed short interval.** Resetting the
+  peripheral yanks the USB device away from the far side, so a host that keeps
+  losing it can never finish claiming one — a 30s retry is strictly worse than a
+  single shot. It backs off (12s, 45s, 2min, 5min) and then gives up.
 - **A hung Teensy is recoverable over USB — the physical button is not needed.**
   `pio run -t upload` rebooted a fully hung board (the 134-baud reboot request
   is handled in the USB ISR, which keeps running when the main loop does not).
