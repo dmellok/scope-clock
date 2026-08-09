@@ -33,6 +33,7 @@ enum class Msg : uint8_t {
   SetWeather     = 0x11,   // temperature, sky code, place, detail
   SetTicker      = 0x12,   // marquee text
   SetZones       = 0x13,   // world clock: offsets from LOCAL time
+  SetFont        = 0x14,   // default typeface for text that does not name one
   // device -> host
   Hello          = 0x81,   // fw version, caps, panel size
   Pong           = 0x82,
@@ -121,6 +122,9 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 //                sky 0 clear, 1 part cloud, 2 cloud, 3 rain, 4 snow,
 //                5 storm, 6 fog. Few on purpose: a vector tube can draw
 //                those distinctly and cannot draw twenty.
+// SetFont      [id:u8]   0 regular, 1 seven segment, 2 condensed, 3 wide,
+//                4 italic, 5 bold. A DEFAULT: a face that names a typeface
+//                explicitly (the digital clock asking for segments) keeps it.
 // SetZones     [n:u8] then n x [deltaMin:i16][labelLen:u8][label]
 //                deltaMin is minutes to ADD TO LOCAL TIME, not to UTC. The
 //                host owns every question about summer time and re-sends

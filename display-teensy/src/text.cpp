@@ -425,17 +425,54 @@ const int16_t* const SegFont[96] = {
 
 // One lookup for every page, so every text path — faces, pushed scenes, the
 // ticker — gets katakana and the segment face without knowing they exist.
+// --- typefaces ---------------------------------------------------------------
+// Most of these are DERIVED, not drawn. A stroke font is geometry, so condensed,
+// wide, italic and bold are a horizontal scale, a shear and a double strike —
+// three numbers each, against three hundred hand-drawn glyphs for the same
+// result and a worse one. Only the segment face needs its own outlines, because
+// it is a different thing rather than a different cut of the same thing.
+//
+// Bold is genuinely bold here and not merely brighter: the second strike is
+// offset, so the stroke thickens. Drawing twice in place would only raise the
+// redraw count, which on this display reads as brightness.
+struct Face {
+  uint8_t page;      // 0 stroke outlines, 1 seven segment
+  int16_t xnum, xden;// horizontal scale, as a fraction
+  int16_t slant;     // shear: x += y * slant / 64
+  uint8_t strikes;   // 1, or 2 for a bold double strike
+};
+const Face kFaces[] = {
+  { 0,  1,  1,  0, 1 },   // 0 regular
+  { 1,  1,  1,  0, 1 },   // 1 seven segment
+  { 0,  7, 10,  0, 1 },   // 2 condensed
+  { 0, 13, 10,  0, 1 },   // 3 wide
+  { 0,  1,  1, 14, 1 },   // 4 italic
+  { 0,  1,  1,  0, 2 },   // 5 bold
+};
+constexpr uint8_t kFaceCount = (uint8_t)(sizeof(kFaces) / sizeof(kFaces[0]));
+
+// Font 0 means "whatever the owner picked". Faces that ask for a specific face —
+// the digital clock asking for seven segment — say so explicitly and are not
+// affected, which is the behaviour you want: the setting is a DEFAULT, not an
+// override of deliberate choices.
+uint8_t defaultFace = 0;
+
+inline const Face& faceOf(uint8_t font) {
+  if (font == 0) font = defaultFace;
+  return kFaces[font < kFaceCount ? font : 0];
+}
+
 inline const int16_t* glyph(char ch, uint8_t font) {
   const uint8_t c = (uint8_t)ch;
   // Katakana live above 0x7F and exist only in the stroke face; asking the
   // segment face for one gets a blank rather than an index off the end.
   if (c >= 0xA0) {
-    if (font != 0) return SegFont[0];
+    if (faceOf(font).page) return SegFont[0];
     const int i = c - 0xA0;
     return Kana[i < kKanaCount ? i : 0];
   }
   const int i = (c & 0x7f) - 32;
-  return font ? SegFont[i] : Font[i];
+  return faceOf(font).page ? SegFont[i] : Font[i];
 }
 
 // SetScale(): derive the scaled metrics for a given scale factor.
@@ -452,6 +489,7 @@ Metrics metrics(int scale) {
 // set when the string ended with '\n', which is how a row break is marked; the
 // original drops one kern in that case so a row has n-1 gaps, not n.
 int strWidth(int scale, const char* s, bool& newline, uint8_t font) {
+  const Face& f = faceOf(font);
   int cells = 0, count = 0;
   // UNSIGNED, and it matters. `char` is unsigned on the Teensy and signed on the
   // host the sim builds for, so a katakana code of 0xA0 compares as 160 on the
@@ -462,7 +500,7 @@ int strWidth(int scale, const char* s, bool& newline, uint8_t font) {
     while ((ch = (uint8_t)*s++) >= 0x20) {
       const int16_t* seg = glyph((char)ch, font);
       while (*seg < 0x80) seg += kSegLen;   // skip segments, land on the width
-      cells += *seg & 0x7f;
+      cells += (*seg & 0x7f) * f.xnum / f.xden;
       count++;
     }
   }
@@ -480,12 +518,19 @@ void drawString(int x, int y, int scale, const char* s, uint8_t font) {
   const Metrics m = metrics(scale);
   int penX = x;
 
+  const Face& f = faceOf(font);
+  // Horizontal scale and shear, in glyph units, before the point scale is
+  // applied. Doing it here rather than per typeface is what makes a new cut of
+  // the face three numbers in a table.
+  auto tx = [&](int gx, int gy) { return (gx * f.xnum / f.xden) + (gy * f.slant / 64); };
+  const int boldDx = f.strikes > 1 ? (scale + 8) / 9 : 0;
+
   for (uint8_t ch = (uint8_t)*s++; ch >= 0x20; ch = (uint8_t)*s++) {
     const int16_t* seg = glyph((char)ch, font);
     for (;;) {
       const int16_t v = *seg++;
       if (v >= 0x80) {                       // end flag: low bits are the width
-        penX += (v & 0x7f) * scale + m.kern;
+        penX += ((v & 0x7f) * f.xnum / f.xden) * scale + m.kern;
         break;
       }
       const int a = *seg++;          // XStart  / XCenter
@@ -494,12 +539,16 @@ void drawString(int x, int y, int scale, const char* s, uint8_t font) {
       const int d = *seg++;          // YEnd    / YSize
       const int firstO = *seg++;     // arcs only
       const int lastO  = *seg++;
-      if (v == lin)
-        vec::line(penX + a * scale, y + b * scale,
-                  penX + c * scale, y + d * scale);
-      else
-        vec::ellipseArc(penX + a * scale, y + b * scale,
-                        (c * scale) / 2, (d * scale) / 2, firstO, lastO);
+      for (uint8_t k = 0; k < f.strikes; ++k) {
+        const int off = k ? boldDx : 0;
+        if (v == lin)
+          vec::line(penX + tx(a, b) * scale + off, y + b * scale,
+                    penX + tx(c, d) * scale + off, y + d * scale);
+        else
+          vec::ellipseArc(penX + tx(a, b) * scale + off, y + b * scale,
+                          (c * scale * f.xnum / f.xden) / 2, (d * scale) / 2,
+                          firstO, lastO);
+      }
     }
   }
 }
@@ -511,6 +560,10 @@ int measure(int scale, const char* s, uint8_t font) {
 
 int kern(int scale)   { return metrics(scale).kern; }
 int height(int scale) { return metrics(scale).chrHt; }
+
+void setDefaultFace(uint8_t id) { defaultFace = id < kFaceCount ? id : 0; }
+uint8_t defaultFaceId() { return defaultFace; }
+uint8_t faceCount() { return kFaceCount; }
 
 // Center(): fill in x/y for text items so the block sits centred on (0,0).
 //

@@ -74,7 +74,34 @@ def main():
             print("  -", b)
         return 1
     print(f"ok: {len(names)} faces, {len(runs)} families, names and groups in step")
-    return 0
+    return check_fonts()
+
+
+# The typeface list is spelled out in three places for three different reasons:
+# the device needs the metrics, the bridge needs the Home Assistant options, and
+# the page needs something to put in a <select>. Only the order ties them.
+def check_fonts():
+    dev = [m.group(1).strip().lower() for m in re.finditer(
+        r"^\s*\{[^}]*\},\s*//\s*\d+\s+(.+?)\s*$",
+        block(ROOT / "display-teensy/src/text.cpp", "const Face kFaces[]"), re.M)]
+    bri = re.findall(r'"([^"]+)"',
+                     block(ROOT / "bridge-esp32/src/main.cpp", "kFontNames[] ="))
+    web = re.findall(r'"([^"]+)"',
+                     block(ROOT / "bridge-esp32/src/webui.h", "var FONTS=", "];"))
+    if dev and dev == bri == web:
+        print(f"ok: {len(dev)} typefaces in step")
+        return 0
+    print("typeface tables disagree:")
+    print("  device:", dev)
+    print("  bridge:", bri)
+    print("  web:   ", web)
+    return 1
+
+
+def block(path, marker, end="};"):
+    text = path.read_text()
+    i = text.index(marker)
+    return text[i:text.index(end, i)]
 
 
 if __name__ == "__main__":

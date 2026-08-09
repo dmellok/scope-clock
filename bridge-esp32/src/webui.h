@@ -153,6 +153,7 @@ footer a:hover{text-decoration:underline}
     <label class="mini"><input type="checkbox" id="autonp">show now-playing when music starts</label>
     <span class="sp"></span>
     <label class="mini">element<select id="elem"></select></label>
+    <label class="mini">typeface<select id="font"></select></label>
   </div>
   <div class="row" style="margin-top:10px">
     <label class="mini" style="flex:1;gap:9px">size
@@ -729,6 +730,12 @@ var SYMS=("H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe C
 el("elem").innerHTML='<option value="0">cycle</option>'+SYMS.map(function(sy,i){
   return '<option value="'+(i+1)+'">'+(i+1)+' '+sy+'</option>'}).join("");
 el("elem").onchange=function(){post("/api/element",this.value)};
+// The typeface every face uses unless it asks for a specific one — the digital
+// clock keeps its seven-segment numerals whatever is chosen here.
+var FONTS=["regular","seven segment","condensed","wide","italic","bold"];
+el("font").innerHTML=FONTS.map(function(f,i){
+  return '<option value="'+i+'">'+f+'</option>'}).join("");
+el("font").onchange=function(){post("/api/font",this.value)};
 el("autonp").onchange=function(){post("/api/autonp",this.checked?"1":"0")};
 el("wobble").onchange=function(){post("/api/wobble",this.checked?"1":"0")};
 el("fscale").oninput=function(){el("fscaleval").textContent=this.value+"%"};
@@ -756,6 +763,7 @@ function poll(){
     if(s.autonp!==undefined)el("autonp").checked=!!s.autonp;
     if(s.wobble!==undefined)el("wobble").checked=!!s.wobble;
     if(s.elem!==undefined&&document.activeElement!==el("elem"))el("elem").value=s.elem;
+    if(s.font!==undefined&&document.activeElement!==el("font"))el("font").value=s.font;
     if(document.activeElement!==el("fscale")&&s.scale!==undefined){
       el("fscale").value=s.scale; el("fscaleval").textContent=s.scale+"%"}
     el("s-mode").textContent=mn;

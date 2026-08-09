@@ -12,6 +12,13 @@ namespace txt {
   int   kern(int scale);                     // inter-character advance
   int   height(int scale);                   // cell height, for vertical centring
 
+  // Which face font 0 resolves to: 0 regular, 1 seven segment, 2 condensed,
+  // 3 wide, 4 italic, 5 bold. A face that names a font explicitly is unaffected,
+  // so this is a default rather than an override.
+  void    setDefaultFace(uint8_t id);
+  uint8_t defaultFaceId();
+  uint8_t faceCount();
+
   // Ink width: what measure() reports less the trailing kern, i.e. the extent
   // actually drawn. This is the one to halve when centring on a point.
   inline int inkWidth(int scale, const char* s, uint8_t font = 0) {

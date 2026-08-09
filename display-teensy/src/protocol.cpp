@@ -11,6 +11,7 @@
 #include "faces_impl.h"
 #include "hostdata.h"
 #include "zones.h"
+#include "text.h"
 #include <Arduino.h>
 
 namespace {
@@ -174,6 +175,10 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
 
     case proto::Msg::SetNowPlaying:
       np::set(payload, len);
+      break;
+
+    case proto::Msg::SetFont:
+      if (len >= 1) txt::setDefaultFace(payload[0]);
       break;
 
     case proto::Msg::SetZones:
