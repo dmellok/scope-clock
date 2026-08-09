@@ -12,6 +12,7 @@
 #include <limits.h>
 #include "protocol.h"     // shared/
 #include "webui.h"
+#include "constellations.h"
 #include "soc/usb_serial_jtag_struct.h"
 #include "soc/system_reg.h"
 
@@ -465,6 +466,7 @@ static const FaceEntry kFaces[] = {
   {"pong","Games"}, {"life","Games"},
   {"trailclock","Extra"}, {"ticker","Extra"}, {"worldclock","Extra"},
   {"asteroids","Arcade"},
+  {"constell","Stars"}, {"starglobe","Stars"},
 };
 // Everything downstream still wants a plain name by index.
 static const char* faceName(uint8_t i) { return kFaces[i].name; }
@@ -521,6 +523,22 @@ static bool autoNowPlaying = true;    // master switch, persisted
 static bool wobbleOn = true;          // anti-burn-in drift, persisted
 static uint8_t atomZ = 0;             // atom face: 0 cycles, 1..118 pins
 static uint8_t fontId = 0;            // default typeface, persisted
+static uint8_t conId  = 0;            // constellation chart: 0 cycles, 1..88 pins
+
+// The names arrive from tools/gen_stars.py as one pipe-separated string, so
+// picking one out is a walk rather than a table of 88 pointers.
+static String conName(uint8_t oneBased) {
+  if (!oneBased || oneBased > SCOPE_CON_COUNT) return String("cycle");
+  const char* p = SCOPE_CON_NAMES;
+  for (uint8_t n = 1; n < oneBased; ++n) { p = strchr(p, '|'); if (!p) return String(); ++p; }
+  const char* e = strchr(p, '|');
+  return e ? String(p).substring(0, e - p) : String(p);
+}
+
+static void sendConstellation() {
+  const uint8_t p[1] = { conId };
+  sendFrame(proto::Msg::SetConstell, p, 1);
+}
 
 // Order must match kFaces[] in text.cpp.
 static const char* const kFontNames[] = {
@@ -663,6 +681,23 @@ static void pushScene(const String& msg);
 
 static String topic(const char* leaf) { return cfg.mqttPrefix + "/" + leaf; }
 
+// Accepts a name as readily as a number, so a Home Assistant automation can say
+// "Orion" without anyone having to know it is the third-brightest figure.
+static void setConstellationBy(const String& in) {
+  String v = in; v.trim();
+  if (v.length() && (v[0] < '0' || v[0] > '9')) {
+    conId = 0;
+    for (uint8_t i = 1; i <= SCOPE_CON_COUNT; ++i)
+      if (v.equalsIgnoreCase(conName(i))) { conId = i; break; }
+  } else {
+    const long n = v.toInt();
+    conId = (n >= 0 && n <= SCOPE_CON_COUNT) ? (uint8_t)n : 0;
+  }
+  prefs.begin("scopeclock", false); prefs.putUChar("constel", conId); prefs.end();
+  sendConstellation();
+  mqtt.publish(topic("constell/state").c_str(), conName(conId).c_str(), true);
+}
+
 static void setFontByName(const String& in) {
   for (uint8_t i = 0; i < kFontCount; ++i)
     if (in.equalsIgnoreCase(kFontNames[i])) { fontId = i; break; }
@@ -673,6 +708,7 @@ static void setFontByName(const String& in) {
   prefs.begin("scopeclock", false); prefs.putUChar("font", fontId); prefs.end();
   sendFont();
   mqtt.publish(topic("font/state").c_str(), kFontNames[fontId], true);
+  mqtt.publish(topic("constell/state").c_str(), conName(conId).c_str(), true);
 }
 
 // Parse one scene line into the builder. The text form exists so a scene can be
@@ -725,6 +761,7 @@ static void publishState() {
   mqtt.publish(topic("brightness/state").c_str(), b, true);
   mqtt.publish(topic("wobble/state").c_str(), wobbleOn ? "ON" : "OFF", true);
   mqtt.publish(topic("font/state").c_str(), kFontNames[fontId], true);
+  mqtt.publish(topic("constell/state").c_str(), conName(conId).c_str(), true);
 }
 
 static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
@@ -800,6 +837,8 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
                              skyCode(b > 0 ? msg.substring(a + 1, b) : msg.substring(a + 1)),
                              b > 0 ? msg.substring(b + 1) : String(), String());
     }
+  } else if (tp == topic("constell/set")) {
+    setConstellationBy(msg);
   } else if (tp == topic("font/set")) {
     setFontByName(msg);
   } else if (tp == topic("zones/set")) {
@@ -908,6 +947,18 @@ static void publishDiscovery() {
     mqtt.publish((String("homeassistant/select/") + cfg.mqttPrefix + "/font/config").c_str(), j.c_str(), true);
   }
 
+  {
+    // A select rather than the number the element face uses: 88 options is
+    // about 1.2K, well inside the 4K buffer, and nobody knows Orion by index.
+    String opts = "\"cycle\"";
+    for (uint8_t i = 1; i <= SCOPE_CON_COUNT; ++i) { opts += ",\""; opts += conName(i); opts += '"'; }
+    j = String("{\"name\":\"Constellation\",\"uniq_id\":\"" MQTT_PREFIX "_con\",")
+        + "\"cmd_t\":\"" + topic("constell/set") + "\",\"stat_t\":\"" + topic("constell/state") + "\","
+        + "\"options\":[" + opts + "],\"ic\":\"mdi:star-four-points-outline\","
+        + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+    mqtt.publish((String("homeassistant/select/") + cfg.mqttPrefix + "/constell/config").c_str(), j.c_str(), true);
+  }
+
   j = String("{\"name\":\"Element\",\"uniq_id\":\"" MQTT_PREFIX "_elem\",")
       + "\"cmd_t\":\"" + topic("element/set") + "\",\"stat_t\":\"" + topic("element/state") + "\","
       + "\"min\":0,\"max\":118,\"step\":1,\"mode\":\"box\",\"ic\":\"mdi:atom\","
@@ -1007,6 +1058,7 @@ static void mqttConnect() {
   statusFresh = true;                 // republish everything on this connection
   if (cfg.npTopic.length())    mqtt.subscribe(cfg.npTopic.c_str());
   if (cfg.gaugeTopic.length()) mqtt.subscribe(cfg.gaugeTopic.c_str());
+  mqtt.subscribe(topic("constell/set").c_str());
   mqtt.subscribe(topic("font/set").c_str());
   mqtt.subscribe(topic("zones/set").c_str());
   mqtt.subscribe(topic("weather/set").c_str());
@@ -1136,6 +1188,7 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
       sendElement();
       sendZones();
       sendFont();
+      sendConstellation();
       break;
     case proto::Msg::Status: {
       if (len < sizeof(proto::StatusPayload)) break;
@@ -1201,6 +1254,7 @@ static void handleState() {
   j += "\"wobble\":" + String(wobbleOn ? 1 : 0) + ",";
   j += "\"elem\":" + String(atomZ) + ",";
   j += "\"font\":" + String(fontId) + ",";
+  j += "\"con\":" + String(conId) + ",";
   // The bridge's own UTC offset, which is what every zone delta is measured
   // against. Exposed because a wrong world clock looks identical to a wrong
   // zone list from the outside.
@@ -1253,6 +1307,8 @@ static void handleApi() {
     curBrightness = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
     const uint8_t p[1] = { curBrightness };
     sendFrame(proto::Msg::SetBrightness, p, 1);
+  } else if (uri.endsWith("/constell")) {
+    setConstellationBy(body);
   } else if (uri.endsWith("/font")) {
     setFontByName(body);
   } else if (uri.endsWith("/ticker")) {
@@ -1430,6 +1486,8 @@ void setup() {
   wobbleOn       = prefs.getUChar("wobble", 1) != 0;
   atomZ          = prefs.getUChar("atomz", 0);
   fontId         = prefs.getUChar("font", 0);
+  conId          = prefs.getUChar("constel", 0);
+  if (conId > SCOPE_CON_COUNT) conId = 0;
   if (fontId >= kFontCount) fontId = 0;
   zonesJson      = prefs.getString("zones", "");
   if (atomZ > 118) atomZ = 0;
@@ -1493,6 +1551,12 @@ void loop() {
     web.on("/api/face", HTTP_POST, handleApi);
     web.on("/api/brightness", HTTP_POST, handleApi);
     web.on("/api/font", HTTP_POST, handleApi);
+    web.on("/api/constell", HTTP_POST, handleApi);
+    // Fetched once when the page loads rather than folded into /api/state,
+    // which is polled: 88 names is a kilobyte that never changes.
+    web.on("/api/constells", HTTP_GET, []() {
+      web.send(200, "text/plain", SCOPE_CON_NAMES);
+    });
     web.on("/api/ticker", HTTP_POST, handleApi);
     web.on("/api/element", HTTP_POST, handleApi);
     web.on("/api/wobble", HTTP_POST, handleApi);

@@ -181,6 +181,10 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
       if (len >= 1) txt::setDefaultFace(payload[0]);
       break;
 
+    case proto::Msg::SetConstell:
+      if (len >= 1) faces::impl::setConstellation(payload[0]);
+      break;
+
     case proto::Msg::SetZones:
       zones::set(payload, len);
       break;

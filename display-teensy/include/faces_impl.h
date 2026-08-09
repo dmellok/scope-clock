@@ -72,6 +72,13 @@ void setAtomZ(uint8_t z);                      // 0 = cycle
 void nowplaying(const ClockState&, DrawList&); // track + progress ring
 void gauges(const ClockState&, DrawList&);     // labelled percentage rings
 
+// --- sky (faces_sky.cpp) ----------------------------------------------------
+void constell(const ClockState&, DrawList&);   // one real constellation, charted
+void starglobe(const ClockState&, DrawList&);  // the celestial sphere, turning
+void setConstellation(uint8_t idx);            // 0 = cycle, else 1-based
+uint8_t constellationCount();
+const char* constellationName(uint8_t i);      // 0-based, for the host
+
 // --- MIDI (faces_midi.cpp) --------------------------------------------------
 void midiscope(const ClockState&, DrawList&);  // the interval as an X-Y figure
 void midichord(const ClockState&, DrawList&);  // the chord as a shape on a wheel

@@ -34,6 +34,7 @@ enum class Msg : uint8_t {
   SetTicker      = 0x12,   // marquee text
   SetZones       = 0x13,   // world clock: offsets from LOCAL time
   SetFont        = 0x14,   // default typeface for text that does not name one
+  SetConstell    = 0x15,   // constellation chart: pin one, or cycle
   // device -> host
   Hello          = 0x81,   // fw version, caps, panel size
   Pong           = 0x82,
@@ -125,6 +126,9 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 // SetFont      [id:u8]   0 regular, 1 seven segment, 2 condensed, 3 wide,
 //                4 italic, 5 bold. A DEFAULT: a face that names a typeface
 //                explicitly (the digital clock asking for segments) keeps it.
+// SetConstell  [id:u8]   0 cycles every nine seconds, 1..88 pins one. The
+//                order is the device's sky::kCons, brightest figure first;
+//                bridge-esp32/src/constellations.h carries the same names.
 // SetZones     [n:u8] then n x [deltaMin:i16][labelLen:u8][label]
 //                deltaMin is minutes to ADD TO LOCAL TIME, not to UTC. The
 //                host owns every question about summer time and re-sends

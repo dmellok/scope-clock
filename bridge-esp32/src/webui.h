@@ -154,6 +154,7 @@ footer a:hover{text-decoration:underline}
     <span class="sp"></span>
     <label class="mini">element<select id="elem"></select></label>
     <label class="mini">typeface<select id="font"></select></label>
+    <label class="mini">constellation<select id="con"></select></label>
   </div>
   <div class="row" style="margin-top:10px">
     <label class="mini" style="flex:1;gap:9px">size
@@ -168,6 +169,11 @@ footer a:hover{text-decoration:underline}
     dense one and a sparse one can each be sized to the tube. You can also set it
     at the clock: <b>hold the knob's button</b> to enter size mode, turn to
     adjust, tap to leave — it gives the knob back on its own after 8s.<br>
+    <b>Typeface</b> is used by every face that does not ask for a specific one,
+    so the digital clock keeps its seven-segment numerals whatever you pick.
+    <b>Element</b> pins the atom face to one of the 118 and <b>constellation</b>
+    pins the star chart to one of the 88, which otherwise walk on their own.
+    All three are entities in Home Assistant too.<br>
     Now-playing appears when a track starts or changes, never mid-song, and if
     you pick another face it stays picked until the music stops.</p>
 </section>
@@ -736,6 +742,12 @@ var FONTS=["regular","seven segment","condensed","wide","italic","bold"];
 el("font").innerHTML=FONTS.map(function(f,i){
   return '<option value="'+i+'">'+f+'</option>'}).join("");
 el("font").onchange=function(){post("/api/font",this.value)};
+// Fetched rather than embedded: the names are generated alongside the device's
+// star table, so there is no second list here to drift out of order.
+fetch("/api/constells").then(function(r){return r.text()}).then(function(t){
+  el("con").innerHTML='<option value="0">cycle</option>'+t.split("|").map(
+    function(n,i){return '<option value="'+(i+1)+'">'+n+'</option>'}).join("")});
+el("con").onchange=function(){post("/api/constell",this.value)};
 el("autonp").onchange=function(){post("/api/autonp",this.checked?"1":"0")};
 el("wobble").onchange=function(){post("/api/wobble",this.checked?"1":"0")};
 el("fscale").oninput=function(){el("fscaleval").textContent=this.value+"%"};
@@ -764,6 +776,7 @@ function poll(){
     if(s.wobble!==undefined)el("wobble").checked=!!s.wobble;
     if(s.elem!==undefined&&document.activeElement!==el("elem"))el("elem").value=s.elem;
     if(s.font!==undefined&&document.activeElement!==el("font"))el("font").value=s.font;
+    if(s.con!==undefined&&document.activeElement!==el("con"))el("con").value=s.con;
     if(document.activeElement!==el("fscale")&&s.scale!==undefined){
       el("fscale").value=s.scale; el("fscaleval").textContent=s.scale+"%"}
     el("s-mode").textContent=mn;

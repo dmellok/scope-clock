@@ -36,8 +36,9 @@ Physical (zero-hardware-mod route the owner chose):
 
 **P0–P4 are done and running on hardware.** The render engine, the NTP-
 disciplined RTC over a USB-host link, and the generic draw-list path all work.
-**27 faces** — dials, digital, the five Platonic solids, a tesseract, generative
-curves, digital rain, and two driven live by USB-MIDI — plus `PushList` / `Banner` / `SetMode` /
+**46 faces** — dials, digital, the five Platonic solids, a tesseract, generative
+curves, digital rain, a real star chart and celestial globe, and two driven live
+by USB-MIDI — plus `PushList` / `Banner` / `SetMode` /
 `SetBrightness` / `SetHz` from the host, MQTT + Home Assistant discovery on the
 bridge, host-uploadable face templates, and a web config page.
 
@@ -46,7 +47,9 @@ is only the registry and the knob/button navigation. **Face order is the wire
 id** — append, never insert. The bridge's `kFaces[]` carries each name with its
 family group, and MQTT discovery, the web picker and the API all derive from
 that one table. `tools/check_faces.py` proves it still matches the device's
-registry and `kFamilies` runs, from source alone — run it after adding a face.
+registry and `kFamilies` runs, and that the six typeface names agree across the
+device, the bridge and the page — from source alone, so run it after adding a
+face or a font.
 The bridge flashes over Wi-Fi (`pio run -e atoms3u_ota -t upload`); the Teensy
 flashes in one command (`pio run -t upload`).
 
@@ -171,6 +174,30 @@ clone it alongside.
   saveX/saveY would fight), and saveX/saveY are in DAC counts, added after the
   3/2 display scale. Switchable from the page, MQTT and a Home Assistant switch;
   the bridge persists it and re-sends on Hello.
+- **The sky faces are GENERATED, and the chart is mirrored if you are careless.**
+  `tools/gen_stars.py` fetches Stellarium's constellation figures (GPL-2.0+, so
+  compatible) and the HYG catalogue, and bakes 725 stars to UNIT VECTORS plus a
+  per-figure view basis and fitting scale — the device never does trigonometry
+  on a star or normalizes anything. The trap: `cross(z, w)` points EAST, which
+  puts east on the right, i.e. the celestial sphere seen from OUTSIDE. A chart
+  is drawn looking UP, east to the LEFT. Every figure comes out a mirror image
+  and Orion is near enough symmetric that you will not see it. The generator now
+  asserts Betelgeuse lands up-and-left of Rigel and Alkaid left of Dubhe, and
+  those checks were confirmed to FAIL on the old basis before being kept.
+  Regenerate with `python3 tools/gen_stars.py`; it writes the device's
+  `stars.h` AND the bridge's `constellations.h`, so the picker cannot drift.
+- **On a round face the bound is a RADIUS, not a box — and `faces6` measures a
+  box.** A name inside +-1200 in x and y can still have its corners off the
+  glass, because at y = -1000 the chord is only about 560 either side. The
+  constellation name is fitted to the chord at its LOWEST ink, and the figure is
+  fitted small (880) and lifted 200 to leave that strip clear.
+  `scratchpad/hostsim/constells.cpp` measures worst RADIUS over all 88 — a face
+  that cycles on a 9s timer also needs a way to be pinned, or a 1100-frame sweep
+  at 17ms only ever sees two of them.
+- **Two Q16 values multiplied overflow int32.** Everywhere else in the render
+  path one side is a coordinate under 10^4 and there is room; the globe's view
+  vector is `sin * sin`, i.e. 2^32, and UBSan caught it in the host sim. Three
+  64-bit multiplies once a frame is nothing.
 - **NO leading zeros in coordinate tables.** A tidily column-aligned `-060` is
   octal 48, and `-0960` will not compile at all. Both happened while padding the
   teapot's spout and handle to line up, and only the second was an error the

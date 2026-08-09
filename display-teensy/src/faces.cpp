@@ -44,6 +44,8 @@ RenderFn kFaces[] = {
   trailclock, ticker, worldclock,
   // arcade
   asteroids,
+  // stars — real catalogue data, see stars.h
+  constell, starglobe,
 };
 
 // Contiguous runs of kFaces above. Keep the two in step.
@@ -63,6 +65,7 @@ const Family kFamilies[] = {
   { 38, 2 },   // games:   pong, life
   { 40, 3 },   // extra:   trail clock, ticker, world clock
   { 43, 1 },   // arcade:  asteroids
+  { 44, 2 },   // stars:   constellation chart, celestial globe
 };
 constexpr uint8_t kFamilyCount = sizeof(kFamilies) / sizeof(kFamilies[0]);
 
