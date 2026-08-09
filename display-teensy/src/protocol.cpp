@@ -9,6 +9,7 @@
 #include "gauges.h"
 #include "vector.h"
 #include "faces_impl.h"
+#include "hostdata.h"
 #include <Arduino.h>
 
 namespace {
@@ -172,6 +173,14 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
 
     case proto::Msg::SetNowPlaying:
       np::set(payload, len);
+      break;
+
+    case proto::Msg::SetWeather:
+      host::setWeather(payload, len);
+      break;
+
+    case proto::Msg::SetTicker:
+      host::setTicker(payload, len);
       break;
 
     case proto::Msg::SetElement:

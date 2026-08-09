@@ -197,6 +197,10 @@ footer a:hover{text-decoration:underline}
     <button class="primary" id="b-send">Send</button>
   </div>
   <div class="row" style="margin-top:8px">
+    <input type="text" id="tick" placeholder="ticker text" maxlength="150">
+    <button id="b-tick">Scroll</button>
+  </div>
+  <div class="row" style="margin-top:8px">
     <label class="mini">where
       <select id="nplace">
         <option value="bottom">bottom strip</option>
@@ -334,6 +338,7 @@ el("b-send").onclick=function(){
     ",\"ms\":"+(Math.max(1,Math.min(60,+el("nms").value||8))*1000)+"}");
 };
 el("b-nclear").onclick=function(){post("/api/notify","{\"message\":\"\",\"ms\":0}")};
+el("b-tick").onclick=function(){post("/api/ticker",el("tick").value)};
 el("b-push").onclick=function(){post("/api/scene",el("scene").value)};
 el("b-clear").onclick=function(){post("/api/scene","")};
 

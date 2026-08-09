@@ -460,6 +460,9 @@ static const FaceEntry kFaces[] = {
   {"teapot","Wireframes"}, {"sphere","Wireframes"}, {"knot","Wireframes"},
   {"mobius","Wireframes"}, {"helix","Wireframes"},
   {"atom","Science"},
+  {"solar","Sky"}, {"moon","Sky"}, {"weather","Sky"},
+  {"pong","Games"}, {"life","Games"},
+  {"trailclock","Extra"}, {"ticker","Extra"},
 };
 // Everything downstream still wants a plain name by index.
 static const char* faceName(uint8_t i) { return kFaces[i].name; }
@@ -515,6 +518,43 @@ static uint8_t npFace() {
 static bool autoNowPlaying = true;    // master switch, persisted
 static bool wobbleOn = true;          // anti-burn-in drift, persisted
 static uint8_t atomZ = 0;             // atom face: 0 cycles, 1..118 pins
+
+// Words the weather services actually use, mapped onto the seven shapes the
+// display can draw distinctly. Order matters: "partly cloudy" must be tested
+// before "cloudy", or it matches the wrong one.
+static uint8_t skyCode(const String& in) {
+  String t = in; t.toLowerCase();
+  if (t.indexOf("thunder") >= 0 || t.indexOf("storm") >= 0)   return 5;
+  if (t.indexOf("snow") >= 0 || t.indexOf("sleet") >= 0)      return 4;
+  if (t.indexOf("rain") >= 0 || t.indexOf("shower") >= 0 ||
+      t.indexOf("drizzl") >= 0)                               return 3;
+  if (t.indexOf("fog") >= 0 || t.indexOf("mist") >= 0 ||
+      t.indexOf("haze") >= 0)                                 return 6;
+  if (t.indexOf("part") >= 0 || t.indexOf("few") >= 0)        return 1;
+  if (t.indexOf("cloud") >= 0 || t.indexOf("overcast") >= 0)  return 2;
+  if (t.indexOf("clear") >= 0 || t.indexOf("sun") >= 0)       return 0;
+  return 2;
+}
+
+static void sendWeather(int16_t t10, uint8_t sky, const String& place, const String& detail) {
+  uint8_t p[proto::MAX_PAYLOAD];
+  p[0] = (uint8_t)(t10 & 0xFF); p[1] = (uint8_t)(t10 >> 8); p[2] = sky;
+  const uint8_t pl = (uint8_t)(place.length() > 23 ? 23 : place.length());
+  p[3] = pl;
+  uint16_t n = 4;
+  for (uint8_t i = 0; i < pl; ++i) p[n++] = (uint8_t)place[i];
+  for (uint16_t i = 0; i < detail.length() && n < proto::MAX_PAYLOAD; ++i)
+    p[n++] = (uint8_t)detail[i];
+  sendFrame(proto::Msg::SetWeather, p, (uint8_t)n);
+}
+
+static void sendTicker(const String& text) {
+  uint8_t p[proto::MAX_PAYLOAD];
+  uint16_t n = 0;
+  for (uint16_t i = 0; i < text.length() && n < proto::MAX_PAYLOAD; ++i)
+    p[n++] = (uint8_t)text[i];
+  sendFrame(proto::Msg::SetTicker, p, (uint8_t)n);
+}
 
 static void sendElement() {
   const uint8_t p[1] = { atomZ };
@@ -665,6 +705,20 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
     sendGauges(pct, labels, 3, footer);
   } else if (tp == topic("notify/set")) {
     applyNotify(msg, bannerMs);
+  } else if (tp == topic("weather/set")) {
+    // JSON from an HA automation, or "21.5 rain MELBOURNE" from a shell.
+    if (msg.startsWith("{")) {
+      const float t = jsonField(msg, "temp").toFloat();
+      sendWeather((int16_t)lroundf(t * 10), skyCode(jsonField(msg, "condition")),
+                  jsonField(msg, "place"), jsonField(msg, "detail"));
+    } else {
+      const int a = msg.indexOf(' '), b = msg.indexOf(' ', a + 1);
+      if (a > 0) sendWeather((int16_t)lroundf(msg.substring(0, a).toFloat() * 10),
+                             skyCode(b > 0 ? msg.substring(a + 1, b) : msg.substring(a + 1)),
+                             b > 0 ? msg.substring(b + 1) : String(), String());
+    }
+  } else if (tp == topic("ticker/set")) {
+    sendTicker(msg);
   } else if (tp == topic("element/set")) {
     // 0, "cycle" or anything unparseable means walk the table.
     const long v = msg.equalsIgnoreCase("cycle") ? 0 : msg.toInt();
@@ -743,6 +797,11 @@ static void publishDiscovery() {
       + "\"options\":[" + opts + "],"
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
   mqtt.publish((String("homeassistant/select/") + cfg.mqttPrefix + "/face/config").c_str(), j.c_str(), true);
+
+  j = String("{\"name\":\"Ticker\",\"uniq_id\":\"" MQTT_PREFIX "_ticker\",")
+      + "\"cmd_t\":\"" + topic("ticker/set") + "\",\"ic\":\"mdi:text-long\","
+      + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+  mqtt.publish((String("homeassistant/notify/") + cfg.mqttPrefix + "/ticker/config").c_str(), j.c_str(), true);
 
   j = String("{\"name\":\"Element\",\"uniq_id\":\"" MQTT_PREFIX "_elem\",")
       + "\"cmd_t\":\"" + topic("element/set") + "\",\"stat_t\":\"" + topic("element/state") + "\","
@@ -843,6 +902,8 @@ static void mqttConnect() {
   statusFresh = true;                 // republish everything on this connection
   if (cfg.npTopic.length())    mqtt.subscribe(cfg.npTopic.c_str());
   if (cfg.gaugeTopic.length()) mqtt.subscribe(cfg.gaugeTopic.c_str());
+  mqtt.subscribe(topic("weather/set").c_str());
+  mqtt.subscribe(topic("ticker/set").c_str());
   mqtt.subscribe(topic("element/set").c_str());
   mqtt.subscribe(topic("wobble/set").c_str());
   mqtt.subscribe(topic("notify/set").c_str());
@@ -1078,6 +1139,8 @@ static void handleApi() {
     curBrightness = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
     const uint8_t p[1] = { curBrightness };
     sendFrame(proto::Msg::SetBrightness, p, 1);
+  } else if (uri.endsWith("/ticker")) {
+    sendTicker(body);
   } else if (uri.endsWith("/element")) {
     const long v = body.equalsIgnoreCase("cycle") ? 0 : body.toInt();
     atomZ = (uint8_t)(v >= 1 && v <= 118 ? v : 0);
@@ -1310,6 +1373,7 @@ void loop() {
     web.on("/api/faces", HTTP_GET, handleFaces);
     web.on("/api/face", HTTP_POST, handleApi);
     web.on("/api/brightness", HTTP_POST, handleApi);
+    web.on("/api/ticker", HTTP_POST, handleApi);
     web.on("/api/element", HTTP_POST, handleApi);
     web.on("/api/wobble", HTTP_POST, handleApi);
     web.on("/api/autonp", HTTP_POST, handleApi);

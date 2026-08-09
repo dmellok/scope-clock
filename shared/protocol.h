@@ -30,6 +30,8 @@ enum class Msg : uint8_t {
   SetGauges      = 0x0E,   // labelled percentages, for the gauges face
   SetWobble      = 0x0F,   // anti-burn-in drift on/off
   SetElement     = 0x10,   // atom face: atomic number, 0 = cycle
+  SetWeather     = 0x11,   // temperature, sky code, place, detail
+  SetTicker      = 0x12,   // marquee text
   // device -> host
   Hello          = 0x81,   // fw version, caps, panel size
   Pong           = 0x82,
@@ -114,6 +116,11 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 //                [title][artist][album]   flags bit0 = playing.
 //                Sent when the track CHANGES, not per second: the device
 //                advances the progress ring itself between messages.
+// SetWeather   [tempC10:i16][sky:u8][placeLen:u8][place][detail]
+//                sky 0 clear, 1 part cloud, 2 cloud, 3 rain, 4 snow,
+//                5 storm, 6 fog. Few on purpose: a vector tube can draw
+//                those distinctly and cannot draw twenty.
+// SetTicker    [chars...]   marquee text, to the end of the payload.
 // SetElement   [z:u8]    1..118 pins the atom face to one element; 0 cycles.
 // SetWobble    [on:u8]   continuous slow drift of the whole image, which
 //                supersedes the hourly screensaver nudge while it is on.

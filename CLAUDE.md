@@ -113,6 +113,11 @@ clone it alongside.
   Same shape as the RTC: the host supplies truth, the device keeps time against
   it. `gauges` is deliberately generic — n labelled percentages and a footer,
   nothing about where they came from — so any topic can drive it.
+- **The sim needs a CLOCK.** `fake/Arduino.h` had `millis()` return 0, so the
+  ticker rendered an empty window and measured as a two-item face; the
+  notification expiry, now-playing progress and the wobble were all frozen too.
+  It now steps 17ms a rendered frame. Any face driven by time is untested
+  without it.
 - **The sim's dot count is NOT the whole frame cost.** Every item also pays
   settling, glow and the blanked jump to its start — about 20us each. Ignoring
   that made oganesson look like 86% of budget when the tube reported 102-109%.

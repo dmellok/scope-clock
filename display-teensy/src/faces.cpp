@@ -37,6 +37,11 @@ RenderFn kFaces[] = {
   teapot, sphere, knot, mobius, helix,
   // science
   atom,
+  // sky and games
+  solar, moon, weather,
+  pong, life,
+  // clocks and text
+  trailclock, ticker,
 };
 
 // Contiguous runs of kFaces above. Keep the two in step.
@@ -52,6 +57,9 @@ const Family kFamilies[] = {
   { 27, 2 },   // data:    now playing, gauges
   { 29, 5 },   // wire:    teapot, sphere, knot, mobius, helix
   { 34, 1 },   // science: Bohr atom
+  { 35, 3 },   // sky:     solar system, moon, weather
+  { 38, 2 },   // games:   pong, life
+  { 40, 2 },   // extra:   trail clock, ticker
 };
 constexpr uint8_t kFamilyCount = sizeof(kFamilies) / sizeof(kFamilies[0]);
 

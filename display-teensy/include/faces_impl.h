@@ -45,6 +45,15 @@ void starpoly(const ClockState&, DrawList&);   // {n/k} star polygons
 void starfield(const ClockState&, DrawList&);
 void tunnel(const ClockState&, DrawList&);
 
+// --- more (faces_more.cpp) --------------------------------------------------
+void solar(const ClockState&, DrawList&);      // planets, from the date
+void moon(const ClockState&, DrawList&);       // phase, from the date
+void pong(const ClockState&, DrawList&);       // plays itself
+void life(const ClockState&, DrawList&);       // Conway, drawn as runs
+void trailclock(const ClockState&, DrawList&); // hands with a phosphor wake
+void weather(const ClockState&, DrawList&);    // host-fed
+void ticker(const ClockState&, DrawList&);     // host-fed marquee
+
 // --- wireframes (faces_wire.cpp) --------------------------------------------
 void teapot(const ClockState&, DrawList&);     // the Utah teapot, as a profile
 void sphere(const ClockState&, DrawList&);     // meridians and parallels
