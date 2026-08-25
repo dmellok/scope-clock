@@ -144,6 +144,33 @@ void poll(DeviceState& dev) {
   if (dev.menuMode && (int32_t)(millis() - dev.menuUntilMs) >= 0)
     dev.menuMode = false;
 
+  // Any touch of the knob wakes the clock, and the input that woke it is
+  // SWALLOWED. A press that wakes a dark display should not also change what is
+  // on it — that is what anything with a screen has trained people to expect,
+  // and it matters more here because this same button cycles the face.
+  //
+  // Checked after the timeouts above so an abandoned menu or half-finished edit
+  // still expires while the tube is dark, rather than being waiting there when
+  // it comes back.
+  if (dev.sleeping) {
+    const bool pressed = (digitalReadFast(kBtn) == 0);
+    if (detents != 0 || pressed) {
+      dev.sleeping     = false;
+      dev.sleepChanged = true;
+      // Pin the button state machine at "already handled" for the rest of this
+      // hold: the tap fires on RELEASE when !longSent, and the menu opens on a
+      // long hold when !setSent, so both have to be pre-set or the wake press
+      // falls through into one of them.
+      if (pressed) {
+        butHist  = kDebouncePolls;
+        butDown  = true;
+        longSent = true;
+        setSent  = true;
+      }
+    }
+    return;
+  }
+
   if (detents != 0 && dev.edit != DeviceState::Edit::None) {
     // Wrapping, so a field can be reached from either direction — nobody wants
     // to turn a knob 55 clicks forward to go back five. The range is asked for

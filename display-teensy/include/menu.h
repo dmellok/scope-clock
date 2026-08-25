@@ -10,7 +10,7 @@ namespace Menu {
 // Order is the display order. Nothing persists this, so it can be reordered
 // freely — unlike the face registry, whose order is the wire id.
 enum : uint8_t {
-  SetTime = 0, SetDate, FaceSize, Typeface, Drift, Info, Exit, kCount
+  SetTime = 0, SetDate, FaceSize, Typeface, Drift, Sleep, Info, Exit, kCount
 };
 
 // The line shown under the selected entry, or nullptr when it has no value.

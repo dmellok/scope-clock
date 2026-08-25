@@ -80,6 +80,17 @@ struct DeviceState {
   // a typeface chosen at the clock would be undone by the next Hello.
   bool      fontChanged   = false;
   bool      wobbleChanged = false;
+  bool      sleepChanged  = false;
+
+  // Warm standby: the beam is blanked and no frame is composed, but the tube
+  // stays lit and the loop keeps turning, so the RTC stays disciplined, the
+  // link stays alive and waking is the next frame.
+  //
+  // NOT a fourth Mode. Sleep is orthogonal to what is showing — waking has to
+  // return to the face or pushed scene that was up, and folding it into Mode
+  // would throw that away. The notification overlay is orthogonal for the same
+  // reason.
+  bool      sleeping = false;
 
   DeviceState() { for (uint8_t i = 0; i < kMaxFaces; ++i) faceScale[i] = kDefaultScale; }
 

@@ -145,6 +145,25 @@ void tuneDwell(uint32_t frameUs, uint32_t budgetUs) {
            : ((uint32_t)next > kDwellCeiling ? kDwellCeiling : (uint32_t)next);
 }
 
+// Park the beam OFF THE GLASS, not at the centre of it.
+//
+// Blanking this tube does not fully extinguish the beam — the Z input is one
+// pin and it dims rather than cuts — so a parked spot stays faintly lit. At the
+// midpoint that is a stationary dot burning the exact centre of the phosphor,
+// which is the fastest way there is to damage a CRT: every anti-burn measure in
+// this firmware exists to stop the beam dwelling anywhere, and this was doing
+// the opposite for as long as the clock was asleep.
+//
+// The DAC's corner is 2896 counts from centre against a usable radius of about
+// 1800, so whatever is left of the beam lands well outside the visible area.
+// Written raw, deliberately: hal::dac::write bypasses toDacX/toDacY, so the
+// trim, centring and anti-burn offsets cannot drag it back onto the glass.
+void park() {
+  hal::dac::blank(true);
+  hal::dac::write(0, 0);
+  beamX = beamY = 0;      // real, so the next stroke's motion delay is honest
+}
+
 void init() {
   // The cycle counter is the dwell timebase; the Teensy 3 core leaves it off.
   ARM_DEMCR    |= ARM_DEMCR_TRCENA;
@@ -155,9 +174,7 @@ void init() {
     costab[i] = (int32_t)(65536.0 * cos(a));
     sintab[i] = (int32_t)(65536.0 * sin(a));
   }
-  hal::dac::blank(true);
-  hal::dac::write(kMidDac, kMidDac);
-  beamX = beamY = kMidDac;
+  park();      // dark and off the glass until the first frame draws
 }
 
 int32_t sinT(int idx) { return sintab[((idx % kSteps) + kSteps) % kSteps]; }

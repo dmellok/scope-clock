@@ -71,6 +71,13 @@ void setAtomZ(uint8_t z);                      // 0 = cycle
 // --- host-fed (faces_now.cpp) -----------------------------------------------
 void nowplaying(const ClockState&, DrawList&); // track + progress ring
 void gauges(const ClockState&, DrawList&);     // labelled percentage rings
+void radar(const ClockState&, DrawList&);      // swept bearing/range contacts
+
+// --- audio, from the bridge's microphone (faces_audio.cpp) ------------------
+void spectrum(const ClockState&, DrawList&);   // 32 mirrored bars round the rim
+void scope(const ClockState&, DrawList&);      // triggered waveform
+void vumeter(const ClockState&, DrawList&);    // level ring + peak hold
+void waterfall(const ClockState&, DrawList&);  // spectrogram wound outward
 
 // --- sky (faces_sky.cpp) ----------------------------------------------------
 void constell(const ClockState&, DrawList&);   // one real constellation, charted

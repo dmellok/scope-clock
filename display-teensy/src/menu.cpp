@@ -34,7 +34,7 @@ constexpr int kHintY  = -930;
 
 const char* const kLabel[Menu::kCount] = {
   "SET TIME", "SET DATE", "FACE SIZE", "TYPEFACE", "BURN-IN DRIFT",
-  "INFO", "EXIT",
+  "SLEEP", "INFO", "EXIT",
 };
 
 // Same order and spelling as kFaces[] in text.cpp and kFontNames[] on the
@@ -95,6 +95,14 @@ void Menu::activate(DeviceState& dev) {
     case Menu::Drift:
       vec::setWobble(!vec::wobble());
       dev.wobbleChanged = true;
+      break;
+    case Menu::Sleep:
+      // Closing the list matters: leaving it up would mean waking into a menu
+      // that has been sitting there all night, and the first knob touch is
+      // swallowed by the wake so it could not be dismissed in one gesture.
+      dev.menuMode     = false;
+      dev.sleeping     = true;
+      dev.sleepChanged = true;          // so a bridge, if there is one, knows
       break;
     case Menu::Info:
       break;                            // the value line is the whole entry

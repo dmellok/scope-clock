@@ -48,6 +48,13 @@ RenderFn kFaces[] = {
   constell, starglobe,
   // setup — the centring target; see rawScale() below, it is never scaled
   align,
+  // network — host-fed contacts, swept. Appended here rather than filed with
+  // the other host-fed faces because face order IS the wire id: moving it up
+  // beside gauges would renumber every face after it.
+  radar,
+  // audio — the bridge's microphone, drawn. Appended, like everything since:
+  // face order IS the wire id.
+  spectrum, scope, vumeter, waterfall,
 };
 
 // Contiguous runs of kFaces above. Keep the two in step.
@@ -69,6 +76,8 @@ const Family kFamilies[] = {
   { 43, 1 },   // arcade:  asteroids
   { 44, 2 },   // stars:   constellation chart, celestial globe
   { 46, 1 },   // setup:   centring target
+  { 47, 1 },   // net:     radar
+  { 48, 4 },   // audio:   spectrum, scope, VU, waterfall
 };
 constexpr uint8_t kFamilyCount = sizeof(kFamilies) / sizeof(kFamilies[0]);
 

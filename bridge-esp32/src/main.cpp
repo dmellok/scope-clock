@@ -12,6 +12,8 @@
 #include <limits.h>
 #include "protocol.h"     // shared/
 #include "webui.h"
+#include "thumbs.h"
+#include "micfx.h"
 #include "constellations.h"
 #include "soc/usb_serial_jtag_struct.h"
 #include "soc/system_reg.h"
@@ -164,7 +166,11 @@ static const char* msgName(uint8_t id) {
     case proto::Msg::SetScales:     return "SetScales";
     case proto::Msg::SetNowPlaying: return "SetNowPlaying";
     case proto::Msg::SetGauges:     return "SetGauges";
+    case proto::Msg::SetRadar:      return "SetRadar";
     case proto::Msg::SetWobble:     return "SetWobble";
+    case proto::Msg::SetSleep:      return "SetSleep";
+    case proto::Msg::SetAudio:      return "SetAudio";
+    case proto::Msg::SetWave:       return "SetWave";
     case proto::Msg::SetElement:    return "SetElement";
     case proto::Msg::SetWeather:    return "SetWeather";
     case proto::Msg::SetTicker:     return "SetTicker";
@@ -180,6 +186,7 @@ static const char* msgName(uint8_t id) {
     case proto::Msg::EventScale:    return "EventScale";
     case proto::Msg::EventFont:     return "EventFont";
     case proto::Msg::EventWobble:   return "EventWobble";
+    case proto::Msg::EventSleep:    return "EventSleep";
   }
   return "unknown";
 }
@@ -336,6 +343,67 @@ static void sendGauges(const uint8_t* pct, const char* const* labels, uint8_t n,
   for (uint16_t i = 0; i < footer.length() && at < proto::MAX_PAYLOAD; ++i)
     p[at++] = (uint8_t)footer[i];
   sendFrame(proto::Msg::SetGauges, p, (uint8_t)at);
+}
+
+// Contacts arrive as a compact line rather than JSON:
+//
+//   name,bearing,range,flags;name,bearing,range,flags|footer
+//
+// The bridge is only a relay here — the device wants bearing/range as bytes and
+// nothing on this path benefits from a parsed object — so a line keeps the ESP32
+// side to a scan for two separators and stays usable from a shell, which is the
+// same bargain the weather and notify topics already make.
+//
+// bearing 0..255 over a turn, range 0..255 out to the rim, flags bit0 new /
+// bit1 self. Anything malformed is skipped rather than aborting the whole line:
+// one bad row from a scanner should not blank a working display.
+static void sendRadar(const String& msg) {
+  uint8_t p[proto::MAX_PAYLOAD];
+  uint8_t n = 0;
+  uint16_t at = 1;
+
+  const int bar = msg.indexOf('|');
+  const String body   = bar >= 0 ? msg.substring(0, bar) : msg;
+  const String footer = bar >= 0 ? msg.substring(bar + 1) : String();
+
+  int i = 0;
+  while (i < (int)body.length() && n < 12) {
+    int semi = body.indexOf(';', i);
+    if (semi < 0) semi = body.length();
+    String rec = body.substring(i, semi);
+    i = semi + 1;
+    rec.trim();
+    if (!rec.length()) continue;
+
+    const int c1 = rec.indexOf(',');
+    const int c2 = c1 < 0 ? -1 : rec.indexOf(',', c1 + 1);
+    if (c1 < 0 || c2 < 0) continue;               // needs at least name,bearing,range
+    const int c3 = rec.indexOf(',', c2 + 1);
+
+    String name = rec.substring(0, c1);
+    const long bearing = rec.substring(c1 + 1, c2).toInt();
+    const long range   = (c3 < 0 ? rec.substring(c2 + 1)
+                                 : rec.substring(c2 + 1, c3)).toInt();
+    const long flags   = c3 < 0 ? 0 : rec.substring(c3 + 1).toInt();
+
+    // 13 is what rdr::Contact::label holds; truncating here rather than letting
+    // the device do it keeps the wire honest about what will be shown.
+    if (name.length() > 13) name = name.substring(0, 13);
+    const uint8_t ll = (uint8_t)name.length();
+    if (at + 4 + ll > proto::MAX_PAYLOAD) break;
+
+    p[at++] = (uint8_t)(bearing & 0xFF);
+    p[at++] = (uint8_t)(range < 0 ? 0 : (range > 255 ? 255 : range));
+    p[at++] = (uint8_t)(flags & 0xFF);
+    p[at++] = ll;
+    for (uint8_t j = 0; j < ll; ++j) p[at++] = (uint8_t)name[j];
+    ++n;
+  }
+
+  p[0] = n;
+  for (uint16_t k = 0; k < footer.length() && at < proto::MAX_PAYLOAD; ++k)
+    p[at++] = (uint8_t)footer[k];
+  sendFrame(proto::Msg::SetRadar, p, (uint8_t)at);
 }
 
 // Accepts either the JSON that HA sends or a bare line of text, so the topic is
@@ -537,6 +605,8 @@ static const FaceEntry kFaces[] = {
   {"asteroids","Arcade"},
   {"constell","Stars"}, {"starglobe","Stars"},
   {"align","Setup"},
+  {"radar","Net"},
+  {"spectrum","Audio"}, {"scope","Audio"}, {"vumeter","Audio"}, {"waterfall","Audio"},
 };
 // Everything downstream still wants a plain name by index.
 static const char* faceName(uint8_t i) { return kFaces[i].name; }
@@ -597,6 +667,21 @@ static uint8_t npFace() {
 // deliberate face choice as an override that holds until the music stops.
 static bool autoNowPlaying = true;    // master switch, persisted
 static bool wobbleOn = true;          // anti-burn-in drift, persisted
+// Warm standby: the tube stays lit and only the beam is blanked. Deliberately
+// NOT persisted — a clock that was asleep when the power went should come back
+// showing the time, because a dark tube and a dead clock look identical and the
+// wrong guess is the one that leaves you tapping a knob to find out which.
+// The SCHEDULE below is persisted; the current state is not.
+static bool sleepOn = false;
+// Minutes since midnight, local. -1 on either disables the schedule. Wrapping
+// is expected and meaningful: 1380..420 is 23:00 to 07:00, which is the case
+// anyone actually wants.
+static int16_t sleepStart = -1, sleepEnd = -1;
+// What the schedule last decided it wanted. File scope rather than a local
+// static so that editing the window can RESET it: set a window that is already
+// open and the edge has been and gone, so without this the clock would not
+// sleep until the following night.
+static int8_t  sleepLastWant = -1;
 static uint8_t atomZ = 0;             // atom face: 0 cycles, 1..118 pins
 static uint8_t fontId = 0;            // default typeface, persisted
 static uint8_t conId  = 0;            // constellation chart: 0 cycles, 1..88 pins
@@ -754,6 +839,22 @@ static void sendWobble() {
   const uint8_t p[1] = { (uint8_t)(wobbleOn ? 1 : 0) };
   sendFrame(proto::Msg::SetWobble, p, 1);
 }
+
+static void sendSleep() {
+  const uint8_t p[1] = { (uint8_t)(sleepOn ? 1 : 0) };
+  sendFrame(proto::Msg::SetSleep, p, 1);
+}
+
+// True when `now` is inside the [start, end) window, handling the wrap that a
+// night-time window always has. A window with equal ends is treated as empty
+// rather than as "always", because the latter would silently blank the tube
+// forever on a fat-fingered entry.
+static bool inWindow(int now, int start, int end) {
+  if (start < 0 || end < 0 || start == end) return false;
+  return start < end ? (now >= start && now < end)
+                     : (now >= start || now < end);
+}
+
 static bool npWasPlaying   = false;
 static String npLastSong;
 static bool npOverridden   = false;   // user picked something else; leave them be
@@ -861,6 +962,7 @@ static void publishState() {
   char b[8]; snprintf(b, sizeof b, "%u", curBrightness);
   mqtt.publish(topic("brightness/state").c_str(), b, true);
   mqtt.publish(topic("wobble/state").c_str(), wobbleOn ? "ON" : "OFF", true);
+  mqtt.publish(topic("sleep/state").c_str(), sleepOn ? "ON" : "OFF", true);
   mqtt.publish(topic("font/state").c_str(), kFontNames[fontId], true);
   mqtt.publish(topic("constell/state").c_str(), conName(conId).c_str(), true);
 }
@@ -924,6 +1026,8 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
       footer += String(used) + " CR";
     }
     sendGauges(pct, labels, 3, footer);
+  } else if (tp == topic("radar/set")) {
+    sendRadar(msg);
   } else if (tp == topic("notify/set")) {
     applyNotify(msg, bannerMs);
   } else if (tp == topic("weather/set")) {
@@ -962,6 +1066,10 @@ static void onMqtt(char* t, uint8_t* payload, unsigned int len) {
     prefs.begin("scopeclock", false); prefs.putUChar("wobble", wobbleOn ? 1 : 0); prefs.end();
     sendWobble();
     mqtt.publish(topic("wobble/state").c_str(), wobbleOn ? "ON" : "OFF", true);
+  } else if (tp == topic("sleep/set")) {
+    sleepOn = !(msg.equalsIgnoreCase("off") || msg == "0" || msg.equalsIgnoreCase("false"));
+    sendSleep();
+    mqtt.publish(topic("sleep/state").c_str(), sleepOn ? "ON" : "OFF", true);
   } else if (tp == topic("banner/set")) {
     sendBanner(msg.c_str(), bannerMs);
   } else if (tp == topic("banner/duration")) {
@@ -1072,6 +1180,12 @@ static void publishDiscovery() {
       + "\"avty_t\":\"" + avail + "\"," + dev + "}";
   mqtt.publish((String("homeassistant/switch/") + cfg.mqttPrefix + "/wobble/config").c_str(), j.c_str(), true);
 
+  j = String("{\"name\":\"Sleep\",\"uniq_id\":\"" MQTT_PREFIX "_sleep\",")
+      + "\"cmd_t\":\"" + topic("sleep/set") + "\",\"stat_t\":\"" + topic("sleep/state") + "\","
+      + "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"ic\":\"mdi:sleep\","
+      + "\"avty_t\":\"" + avail + "\"," + dev + "}";
+  mqtt.publish((String("homeassistant/switch/") + cfg.mqttPrefix + "/sleep/config").c_str(), j.c_str(), true);
+
   j = String("{\"name\":\"Brightness\",\"uniq_id\":\"" MQTT_PREFIX "_bri\",")
       + "\"cmd_t\":\"" + topic("brightness/set") + "\",\"stat_t\":\"" + topic("brightness/state") + "\","
       + "\"min\":0,\"max\":255,\"mode\":\"slider\","
@@ -1166,6 +1280,8 @@ static void mqttConnect() {
   mqtt.subscribe(topic("ticker/set").c_str());
   mqtt.subscribe(topic("element/set").c_str());
   mqtt.subscribe(topic("wobble/set").c_str());
+  mqtt.subscribe(topic("sleep/set").c_str());
+  mqtt.subscribe(topic("radar/set").c_str());
   mqtt.subscribe(topic("notify/set").c_str());
   mqtt.subscribe(topic("banner/set").c_str());
   mqtt.subscribe(topic("banner/duration").c_str());
@@ -1287,6 +1403,11 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
       // what was actually chosen before anyone sees otherwise.
       sendScales();
       sendWobble();
+      // Re-asserted because the device always boots awake. A reflash should not
+      // silently wake a clock that was deliberately put to sleep — and when the
+      // whole clock loses power the bridge reboots with it, so sleepOn is false
+      // there too and this correctly sends "awake".
+      sendSleep();
       sendElement();
       sendZones();
       sendFont();
@@ -1325,6 +1446,16 @@ static void onFrame(uint8_t id, const uint8_t* p, uint8_t len) {
         wobbleOn = p[0] != 0;
         prefs.begin("scopeclock", false); prefs.putUChar("wobble", wobbleOn ? 1 : 0); prefs.end();
         mqtt.publish(topic("wobble/state").c_str(), wobbleOn ? "ON" : "OFF", true);
+      }
+      break;
+
+    case proto::Msg::EventSleep:
+      // Slept or woken at the knob. Recorded and published, but NOT echoed back
+      // as a SetSleep — that would race the next local change, which is the
+      // rule the font and drift events already follow.
+      if (len >= 1) {
+        sleepOn = p[0] != 0;
+        mqtt.publish(topic("sleep/state").c_str(), sleepOn ? "ON" : "OFF", true);
       }
       break;
     case proto::Msg::EventScale:
@@ -1377,6 +1508,21 @@ static String field(const char* label, const char* name, const String& val, bool
 }
 
 // The page polls this; keep it small and allocation-light.
+// Baked face previews. A live one is not reachable over the link — see the
+// header of tools/hostsim/thumbs.cpp — so these are rendered from the real face
+// code at build time and served per face, on demand, rather than embedded in
+// the page. That keeps the page at ~66KB and costs one small request for the
+// face you are actually looking at.
+static void handleThumb() {
+  const int i = web.hasArg("i") ? (int)web.arg("i").toInt() : -1;
+  if (i < 0 || i >= THUMB_COUNT) { web.send(404, "text/plain", "no such face"); return; }
+  // Immutable: a face's frames only change when the firmware does, and the
+  // firmware version is the only thing that could invalidate them.
+  web.sendHeader("Cache-Control", "public, max-age=31536000, immutable");
+  web.send_P(200, "application/octet-stream",
+             (PGM_P)(THUMB_DATA + THUMB_OFF[i]), THUMB_LEN[i]);
+}
+
 static void handleState() {
   const proto::StatusPayload& s = lastStatus;
   String j = "{";
@@ -1386,6 +1532,22 @@ static void handleState() {
   j += "\"scale\":" + String(curFace < sizeof faceScale ? faceScale[curFace] : kDefaultScale) + ",";
   j += "\"autonp\":" + String(autoNowPlaying ? 1 : 0) + ",";
   j += "\"wobble\":" + String(wobbleOn ? 1 : 0) + ",";
+  {
+    int32_t dc=0, rms=0, pk=0; uint32_t blk=0;
+    mic::stats(dc, rms, pk, blk);
+    j += "\"mic\":" + String(mic::running() ? 1 : 0) + ",";
+    j += "\"micslot\":" + String(mic::slot()) + ",";
+    j += "\"micdc\":" + String(dc) + ",\"micrms\":" + String(rms)
+       + ",\"micpk\":" + String(pk) + ",\"micblk\":" + String(blk) + ",";
+  }
+  j += "\"sleep\":" + String(sleepOn ? 1 : 0) + ",";
+  // What the bridge WANTS versus what the device REPORTS. Kept apart on purpose:
+  // the knob can sleep the clock without the bridge asking, and a disagreement
+  // between these two is the only thing that would show a SetSleep going
+  // missing rather than being obeyed.
+  j += "\"slpdev\":" + String(haveStatus ? s.sleeping : 0) + ",";
+  j += "\"slpstart\":" + String(sleepStart) + ",";
+  j += "\"slpend\":" + String(sleepEnd) + ",";
   j += "\"elem\":" + String(atomZ) + ",";
   j += "\"font\":" + String(fontId) + ",";
   j += "\"con\":" + String(conId) + ",";
@@ -1467,6 +1629,35 @@ static void handleApi() {
     prefs.begin("scopeclock", false); prefs.putUChar("wobble", wobbleOn ? 1 : 0); prefs.end();
     sendWobble();
     mqtt.publish(topic("wobble/state").c_str(), wobbleOn ? "ON" : "OFF", true);
+  } else if (uri.endsWith("/micslot")) {
+    mic::setSlot((int8_t)(body.toInt() ? 1 : 0));
+  } else if (uri.endsWith("/sleep")) {
+    sleepOn = !(body == "0" || body.equalsIgnoreCase("off"));
+    sendSleep();
+    mqtt.publish(topic("sleep/state").c_str(), sleepOn ? "ON" : "OFF", true);
+  } else if (uri.endsWith("/sleepwin")) {
+    // "HH:MM-HH:MM", or anything falsey to disable. Minutes rather than a cron
+    // expression because the only question this needs to answer is "is it night
+    // yet", and the device already has local time from the same source.
+    const int dash = body.indexOf('-');
+    auto mins = [](const String& s) -> int16_t {
+      const int c = s.indexOf(':');
+      if (c < 0) return -1;
+      const long h = s.substring(0, c).toInt(), m = s.substring(c + 1).toInt();
+      if (h < 0 || h > 23 || m < 0 || m > 59) return -1;
+      return (int16_t)(h * 60 + m);
+    };
+    if (dash > 0) {
+      sleepStart = mins(body.substring(0, dash));
+      sleepEnd   = mins(body.substring(dash + 1));
+    } else {
+      sleepStart = sleepEnd = -1;
+    }
+    prefs.begin("scopeclock", false);
+    prefs.putShort("slpstart", sleepStart);
+    prefs.putShort("slpend",   sleepEnd);
+    prefs.end();
+    sleepLastWant = -1;      // re-evaluate now; the edge may already have passed
   } else if (uri.endsWith("/autonp")) {
     autoNowPlaying = !(body == "0" || body.equalsIgnoreCase("off"));
     prefs.begin("scopeclock", false);
@@ -1511,11 +1702,14 @@ static String msgSummary(const TraceEntry& e) {
     case proto::Msg::Status:
       if (n >= 16) {
         const uint16_t silent = u16(12);
-        snprintf(b, sizeof b, "up %lus, frame %luus, %uHz, face %u, silent %s",
+        // sleeping is the appended byte at 18; older devices simply do not send
+        // it, hence the length guard rather than an assumption.
+        snprintf(b, sizeof b, "up %lus, frame %luus, %uHz, face %u, silent %s%s",
                  (unsigned long)(d[0] | (d[1] << 8) | ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24)),
                  (unsigned long)(d[4] | (d[5] << 8) | ((uint32_t)d[6] << 16) | ((uint32_t)d[7] << 24)),
                  u16(8), n > 15 ? d[15] : 0,
-                 silent == 0xFFFF ? "never" : String(silent).c_str());
+                 silent == 0xFFFF ? "never" : String(silent).c_str(),
+                 (n > 18 && d[18]) ? ", ASLEEP" : "");
         return b;
       }
       break;
@@ -1733,6 +1927,11 @@ void setup() {
   prefs.begin("scopeclock", true);
   autoNowPlaying = prefs.getUChar("autonp", 1) != 0;
   wobbleOn       = prefs.getUChar("wobble", 1) != 0;
+  // getShort, to match how these are written. putBool against a getUChar reads
+  // back as the default and says nothing about it — the trap already recorded
+  // in CLAUDE.md — so the pair has to agree on the type.
+  sleepStart     = prefs.getShort("slpstart", -1);
+  sleepEnd       = prefs.getShort("slpend",   -1);
   atomZ          = prefs.getUChar("atomz", 0);
   fontId         = prefs.getUChar("font", 0);
   conId          = prefs.getUChar("constel", 0);
@@ -1763,6 +1962,81 @@ void setup() {
 // Wi-Fi comes and goes, and the clock has to survive that: the device keeps
 // its own time from the RTC, so a bridge that cannot reach the network is an
 // inconvenience, not an outage. Nothing here blocks waiting for a link.
+// The schedule only ever acts on a CHANGE of what it wants, so it never fights
+// a manual override: sleep the clock at noon and it stays asleep, because the
+// schedule already wanted "awake" and goes on wanting it without re-asserting.
+// The next edge — the window opening or closing — takes over again.
+//
+// Lives down here because it publishes, and topic() is not declared until well
+// after the state it reads.
+static void sleepScheduleTick() {
+  if (sleepStart < 0 || sleepEnd < 0) return;
+  const time_t t = time(nullptr);
+  if (t < 100000) return;              // NTP has not landed; local time is a guess
+  struct tm lt;
+  localtime_r(&t, &lt);
+  const int now = lt.tm_hour * 60 + lt.tm_min;
+
+  const bool want = inWindow(now, sleepStart, sleepEnd);
+  if ((int8_t)want == sleepLastWant) return;   // -1 initially, so the first acts
+  sleepLastWant = (int8_t)want;
+  if (sleepOn == want) return;
+  sleepOn = want;
+  sendSleep();
+  mqtt.publish(topic("sleep/state").c_str(), sleepOn ? "ON" : "OFF", true);
+}
+
+// Which faces want the microphone, resolved BY NAME so that appending a face
+// cannot silently point this at the wrong one.
+static int faceIndexOf(const char* n) {
+  for (uint8_t i = 0; i < kFaceCount; ++i) if (!strcmp(kFaces[i].name, n)) return i;
+  return -1;
+}
+
+// The microphone runs only while a visualiser is actually on the tube. Two
+// reasons, and both matter: a clock with a mic in it should not be listening
+// when nothing is drawing it, and sendFrame blocks up to 400ms waiting for ring
+// space, so a stream left running would stall the loop serving the web page.
+static void micTick() {
+  static int iSpec = -2, iScope = -2, iVu = -2, iFall = -2;
+  if (iSpec == -2) {
+    iSpec  = faceIndexOf("spectrum"); iScope = faceIndexOf("scope");
+    iVu    = faceIndexOf("vumeter");  iFall  = faceIndexOf("waterfall");
+  }
+  // What the DEVICE reports, not what we last asked for: the knob changes the
+  // face independently of this bridge.
+  const int f = haveStatus ? (int)lastStatus.faceId : (int)curFace;
+
+  mic::Want w = mic::None;
+  if (f == iScope)                               w = mic::Wave;
+  else if (f == iSpec || f == iVu || f == iFall) w = mic::Bands;
+  if (sleepOn) w = mic::None;      // blanked: nothing is being drawn to react
+  mic::want(w);
+  if (w == mic::None) return;
+  mic::poll();
+
+  // 30Hz of bands is about 16% of the link; 20Hz of trace about a third. The
+  // device decays between messages, so neither needs to be faster.
+  static uint32_t last = 0;
+  const uint32_t period = (w == mic::Wave) ? 50 : 33;
+  if (millis() - last < period) return;
+  last = millis();
+
+  if (w == mic::Wave) {
+    int8_t sm[mic::kWaveN]; uint8_t n = 0;
+    if (!mic::wave(sm, n)) return;
+    uint8_t p[mic::kWaveN + 1];
+    p[0] = n; memcpy(p + 1, sm, n);
+    sendFrame(proto::Msg::SetWave, p, (uint8_t)(n + 1));
+  } else {
+    uint8_t b[mic::kBands], n = 0, lv = 0, pk = 0;
+    if (!mic::bands(b, n, lv, pk)) return;
+    uint8_t p[3 + mic::kBands];
+    p[0] = lv; p[1] = pk; p[2] = n; memcpy(p + 3, b, n);
+    sendFrame(proto::Msg::SetAudio, p, (uint8_t)(3 + n));
+  }
+}
+
 void loop() {
   static uint32_t lastSync  = 0;
   static uint32_t lastPing  = 0;
@@ -1813,6 +2087,10 @@ void loop() {
     web.on("/api/ticker", HTTP_POST, handleApi);
     web.on("/api/element", HTTP_POST, handleApi);
     web.on("/api/wobble", HTTP_POST, handleApi);
+    web.on("/api/thumb", HTTP_GET, handleThumb);
+    web.on("/api/micslot", HTTP_POST, handleApi);
+    web.on("/api/sleep", HTTP_POST, handleApi);
+    web.on("/api/sleepwin", HTTP_POST, handleApi);
     web.on("/api/autonp", HTTP_POST, handleApi);
     web.on("/api/scale", HTTP_POST, handleApi);
     web.on("/api/notify", HTTP_POST, handleApi);
@@ -1831,6 +2109,10 @@ void loop() {
   // that out on its own RTC — which is the entire point of it keeping time.
   ArduinoOTA.handle();
   scaleSaveTick();     // lazy NVS write; the knob emits one event per detent
+  // Edge-triggered against local time, so a manual override survives until the
+  // next window boundary rather than being stamped on every second.
+  sleepScheduleTick();
+  micTick();          // mic on only while a visualiser is showing
 
   // Re-send the zone deltas whenever this bridge's own UTC offset changes.
   //

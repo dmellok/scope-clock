@@ -42,6 +42,10 @@ enum class Msg : uint8_t {
   SetFont        = 0x14,   // default typeface for text that does not name one
   SetConstell    = 0x15,   // constellation chart: pin one, or cycle
   SetAlign       = 0x16,   // whole-display centring, in DAC counts
+  SetRadar       = 0x17,   // bearing/range contacts, for the radar face
+  SetSleep       = 0x18,   // blank the tube without turning it off
+  SetAudio       = 0x19,   // band energies + level, for the visualisers
+  SetWave        = 0x1A,   // one triggered scope trace
   // device -> host
   Hello          = 0x81,   // fw version, caps, panel size
   Pong           = 0x82,
@@ -51,6 +55,7 @@ enum class Msg : uint8_t {
   EventScale     = 0x86,   // face id + new scale, when set at the knob
   EventFont      = 0x87,   // typeface chosen at the knob
   EventWobble    = 0x88,   // anti burn-in drift toggled at the knob
+  EventSleep     = 0x89,   // slept or woken at the knob
 };
 
 // CRC-8, polynomial 0x07. Incremental so a receiver can fold each byte in as
@@ -154,9 +159,59 @@ inline uint8_t frameCrc(uint8_t id, uint8_t len, const uint8_t* payload) {
 // SetElement   [z:u8]    1..118 pins the atom face to one element; 0 cycles.
 // SetWobble    [on:u8]   continuous slow drift of the whole image, which
 //                supersedes the hourly screensaver nudge while it is on.
+// SetAudio     [level:u8][peak:u8][n:u8][band:u8 x n]
+//                Band energies, 0..255, low to high, log-spaced. The MIC IS ON
+//                THE BRIDGE (hard rule 5 puts the radio and now the DSP there,
+//                and the beam stays on the Teensy), so nothing but these
+//                numbers ever crosses the link — the audio itself does not
+//                leave the ESP32.
+//                Sent at ~30Hz and ONLY while a visualiser face is showing.
+//                The link drains about 64 bytes a refresh and sendFrame BLOCKS
+//                up to 400ms waiting for room, so a stream left running would
+//                stall the loop that serves the web page. The device decays and
+//                peak-holds between messages, so 30Hz of data still renders at
+//                60Hz — the same bargain nowplaying makes with its ring.
+// SetWave      [n:u8][sample:i8 x n]
+//                One triggered trace, n <= 96. TRIGGERED matters: the bridge
+//                starts the capture at a rising zero crossing, which is what
+//                makes the trace stand still instead of jittering — the thing
+//                an oscilloscope has always done, on a clock that is one.
+//                Costs about a third of the link while showing, so it is sent
+//                at ~20Hz and only for the face that wants it.
+// SetSleep     [state:u8]   0 awake, 1 warm standby. 2 is RESERVED for a real
+//                power-down and is deliberately not implemented: there is no
+//                heater or HV control on this hardware — the firmware drives
+//                exactly one tube pin, the blanking input — so cutting the
+//                supply needs a MOSFET on a spare pin that does not exist yet.
+//                A byte rather than a bool so that fitting one later does not
+//                change the wire format.
+//
+//                Warm standby blanks the beam and stops composing frames. The
+//                heater and HV stay up, so waking is the next frame and the
+//                cathode is never thermally cycled — which is the point: a CRT
+//                is worn by heater HOURS and by CYCLING both, so something that
+//                switched the heater every night could easily cost more tube
+//                life than it saved. Phosphor wear does go to zero, because
+//                that comes from the beam and there is no beam.
+//
+//                Sleep is orthogonal to mode: waking returns to whatever was
+//                showing rather than to a default face.
 // SetGauges    [n:u8] then n x [pct:u8][labelLen:u8][label], then a footer
 //                string to the end. Nothing in it says where the numbers
 //                came from, so any source can drive it.
+// SetRadar     [n:u8] then n x [bearing:u8][range:u8][flags:u8][labelLen:u8]
+//                [label], then a footer string to the end.
+//                bearing 0..255 over a full turn, 0 = north, clockwise.
+//                range   0..255 as a fraction of the outer ring, 255 = rim.
+//                flags   bit0 = new since the last message, bit1 = this host.
+//                Like SetGauges it says nothing about what a contact IS: the
+//                immediate use is hosts on the network placed by ping RTT, but
+//                anything with a bearing and a distance can drive it.
+//                The host does NOT send a sweep angle — the device runs the
+//                sweep off millis() and only needs a new message when the set
+//                of contacts changes, which is the same bargain nowplaying
+//                makes with its progress ring. A scan every few seconds down a
+//                link that wedges is exactly what that pattern exists to avoid.
 // Notify       [ms:u16][place:u8][titleLen:u8][title][body]
 //                place: low bits 0 bottom strip, 1 top strip, 2 centred card;
 //                bit 0x80 = solo, i.e. blank the face behind it.
@@ -205,6 +260,10 @@ struct __attribute__((packed)) StatusPayload {
   uint8_t  faceId;
   uint8_t  brightness;
   uint8_t  rtcOk;
+  // Appended, so a receiver that predates it and length-checks still decodes
+  // everything above. Orthogonal to `mode` on purpose — the host wants to know
+  // both what is showing and whether it is currently being shown.
+  uint8_t  sleeping;     // 0 awake, 1 warm standby
 };
 
 // SetTime payload (local time; host already applied timezone + DST).

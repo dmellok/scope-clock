@@ -19,6 +19,11 @@ constexpr int kSteps = 1024;
 void init();                              // fill sin/cos tables, park the beam
 void renderFrame(const DrawList& list);   // draw every item once (one refresh)
 
+// Blank the beam and return it to the middle, without touching the tables.
+// For standby: no frame is being composed, so the beam should be left somewhere
+// harmless rather than wherever the last stroke happened to end.
+void park();
+
 // primitives (used by text.cpp and faces) — all take display units
 void line(int x0, int y0, int x1, int y1);
 void arc(int cx, int cy, int r);          // full circle, radius r

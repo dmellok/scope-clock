@@ -36,9 +36,9 @@ Physical (zero-hardware-mod route the owner chose):
 
 **P0–P4 are done and running on hardware.** The render engine, the NTP-
 disciplined RTC over a USB-host link, and the generic draw-list path all work.
-**47 faces** — dials, digital, the five Platonic solids, a tesseract, generative
+**52 faces** — dials, digital, the five Platonic solids, a tesseract, generative
 curves, digital rain, a real star chart and celestial globe, a centring target,
-and two driven live by USB-MIDI — plus `PushList` / `Banner` / `SetMode` /
+a network radar, four microphone visualisers, and two driven live by USB-MIDI — plus `PushList` / `Banner` / `SetMode` /
 `SetBrightness` / `SetHz` from the host, MQTT + Home Assistant discovery on the
 bridge, host-uploadable face templates, and a web config page.
 
@@ -266,6 +266,21 @@ clone it alongside.
   brightness. And anything in device units that must stay on the glass has to sit
   at or under 1200 (the notification strips were at 1215, which was inside the
   old field and outside this one).
+- **Sleep is WARM ONLY, and that is a hardware fact rather than a decision.**
+  The firmware drives exactly one tube pin — the blanking input — and so does
+  upstream (`SCTVcode.ino` has `BlankPin` and nothing else). There is no heater
+  or HV control anywhere, so "turn the tube off" cannot be done in software; it
+  needs a MOSFET on a spare pin. `SetSleep` therefore carries a BYTE, not a
+  bool, with 2 reserved for a real power-down, so fitting one later is not a
+  wire-format change.
+  Warm standby blanks the beam and stops composing frames, which takes phosphor
+  wear to zero because wear comes from the beam. It is deliberately NOT a fourth
+  `Mode`: waking has to return to whatever was showing. Verify it without eyes
+  on the tube by watching `frame` in `/api/state` go to 0 while `up` keeps
+  climbing — that separates "asleep" from "reset", which look identical
+  otherwise. Worth knowing if a real off mode is ever fitted: a CRT is worn by
+  heater HOURS and by CYCLING both, so something that switched the heater every
+  night could easily cost more tube life than it saved.
 - **There is a settings MENU on the knob, and that is what makes it standalone.**
   The RTC holds local time and the bridge was the only thing that could write
   it, so a clock with no bridge could not be corrected for drift, a flat backup
@@ -373,13 +388,111 @@ clone it alongside.
   one-way failure obvious — arrows going one way only — rather than something
   you deduce from `linkSilentS` after the tube has already stopped updating.
 
+- **The Pi's USB-C port DISABLES its USB-A ports.** Two hours went on a Teensy
+  that would not enumerate on `tofu`, with the host side looking perfect: the
+  dwc2 controller in host mode, root hub up, a cold-boot bus scan finding
+  nothing, and 60 days of journal with not one enumeration ever. It is not a
+  software fault and no overlay fixes it. The Oratek TOFU carrier muxes the
+  CM4's single USB 2.0 interface in HARDWARE — its docs say "when plugged, the
+  board will switch to USB slave (connected USB devices will stop functioning)"
+  — so anything in the USB-C socket routes those lines away from the onboard
+  Microchip USB2514 hub that feeds the three USB-A ports. The hub then never
+  appears on the bus at all, which is the tell: three USB-A ports need a hub,
+  and a hub enumerates at boot even with nothing plugged into it.
+  It was being POWERED over USB-C, which is also why it logged 4,524
+  undervoltage events a week — USB-C caps at 3A/15W against the 24W the board
+  wants. Power it from the barrel jack (7.5-28V, centre positive) and both
+  faults go away together. A USB-C PD trigger cable into the barrel works if
+  you want to keep a USB-C brick.
+- **A stray digit on the front-jack console puts the clock in AUDIO MODE, and
+  audio mode watchdog-resets it.** This became a live hazard the moment that
+  jack was wired to a Linux box permanently: `main.cpp` enters audio mode on a
+  single byte in '0'..'3', audio mode resets the Teensy when the stream is torn
+  down (already documented above), and the reset drops the USB-host port, which
+  takes the BRIDGE LINK down with it. Symptom seen: `up` jumping back to 5 and
+  `silent` stuck at 65535, which reads exactly like a link fault and is not one.
+  `hal::audio::start()` is reachable ONLY from `dev.mode = Mode::Audio`, which is
+  set ONLY at main.cpp:73, so `audio: build variant N` on the console is proof a
+  byte arrived — and N IS the byte. Recover by writing `f` to the port; no
+  reflash needed. Note `Status.mode` encodes Audio as 0 (`mode == Pushed ? 1 : 0`),
+  so `/api/state` showing `"mode":0` does NOT rule audio mode out — the console
+  is the only place it is visible. The single-key console wants a deliberate
+  multi-byte command before anything else is hung off that port.
+- **`fitScale()` clamps UP, so a long string draws off the rim.** It floors at
+  `kMinSc`, so when the chord at a string's height asks for something smaller
+  than 5 it returns 5 anyway and the ink runs past the glass. Measured, the
+  radar's footer wanted a half-width of 523 and drew 697. `gauges` has the same
+  flaw and only stays on the tube because the default face scale is 70%. Any
+  face fitting text to a chord must do the search itself and DROP the string if
+  it will not fit, rather than go through `centred()`.
+- **The AtomS3U has a MICROPHONE, and it is on the wrong side of the link.**
+  An SPM1423 PDM part on GPIO38 (clock) / GPIO39 (data), which the S3's I2S does
+  natively. The mic is on the bridge and the beam is on the Teensy, so hard rule
+  5 decides the shape: all the DSP happens on the ESP32 and only band energies
+  and one triggered trace cross the wire. The audio never leaves that chip.
+  The link is the constraint and it is tighter than it looks: about 64 bytes a
+  refresh, and `sendFrame` BLOCKS up to 400ms waiting for ring space — so an
+  audio stream left running does not merely drop samples, it stalls the loop
+  serving the web page. 16 bands + level is 19 bytes at 30Hz (~16% of the link);
+  a 64-point trace is 65 bytes at 20Hz (~36%). Capture therefore runs ONLY while
+  a visualiser face is actually showing, which is a privacy property as much as
+  a bandwidth one, and it is gated on the face the DEVICE reports rather than
+  the one the bridge last asked for.
+- **A scope trace has to be TRIGGERED or it skates.** The bridge starts each
+  capture at a rising zero crossing. Without that, a 4ms window refreshed 20
+  times a second slides sideways at whatever the beat frequency between the two
+  rates happens to be, and reads as noise rather than a wave. It is the oldest
+  trick in oscilloscopes and it is the whole difference between a trace and a
+  mess.
+- **The waveform is a RECTANGLE and the tube is a CIRCLE.** A full-scale trace
+  at +-1080 in x and +-1050 in y measured 1482 units at the corners — past the
+  field — while every individual coordinate looked fine. It is clamped to the
+  chord at each x now. Same face also measured 159% of the gauges control's
+  dots at full deflection, because a trace is beam TRAVEL and travel is what the
+  budget is made of; decimating to every other sample past 48 took it to 11%.
+  Both are the same lesson the radar taught: a face fed by data must not let the
+  data decide its cost or its extent.
+- **Ink OUTSIDE a ring is what overruns, not the ring.** The VU meter's rings
+  sat comfortably inside the field while its scale ticks, drawn from kMax+30
+  outward, landed at exactly 1250. Anything hung outside a face's outermost
+  circle has to be counted against the field, not the circle.
+- **A face's cost must not depend on its data.** The radar labels only the
+  contacts the sweep has just passed, which looks right — but twelve hosts that
+  happen to cluster inside that window all get named in the same frame, and
+  that measured 469 beam strokes against gauges' 344, about 9ms of a 16.7ms
+  frame in settling alone. Capping it at the four most recently swept made the
+  worst frame identical whatever the network looks like: 213 strokes either
+  way. Any face fed by a host wants that property.
+
 ## Verifying without eyes on the tube
 
 Two habits that have caught real bugs repeatedly, both worth continuing:
-`scratchpad/hostsim` compiles the real `vector.cpp`/`text.cpp`/`faces.cpp`
-against a fake DAC and renders a frame to SVG, so geometry can be checked before
-flashing; and the PushList decoder is fuzzed under ASan/UBSan with guard bytes,
-since it is the only place untrusted bytes become a structure.
+the host sim compiles the real `vector.cpp`/`text.cpp`/`faces.cpp` against a
+fake DAC, so geometry can be checked before flashing; and the PushList decoder
+is fuzzed under ASan/UBSan with guard bytes, since it is the only place
+untrusted bytes become a structure.
+
+**The sim lives in `tools/hostsim/` and IS COMMITTED.** It used to be under
+`scratchpad/`, was never tracked, and evaporated — this file went on citing
+`faces6`, `cover.cpp`, `phases.cpp` and `constells.cpp` long after none of them
+existed. If you add a measurement harness, commit it.
+
+    ./tools/hostsim/build.sh && ./tools/hostsim/sizeface
+
+`sizeface` sweeps 1100 frames and reports the worst frame, because one sample is
+not enough — the tesseract and the tunnel both ran off the tube only partway
+through a rotation. What it prints, and why each column is there:
+
+- **at 100% AND at 70%.** 100% is the size a face is authored to and is where
+  the +-1200 bound applies; 70% is `kDefaultScale`, i.e. what the tube actually
+  gets. They answer different questions and a face can pass one and fail the
+  other.
+- **a known-good control face alongside the one under test.** The original
+  harness's us-per-dot calibration did not survive; a relative number against a
+  face that demonstrably renders cleanly is worth more than an absolute one
+  derived from a guess. `radar` landing at 61% of `gauges` means something.
+- **worst radius, not a box**, and which ITEM produced it. "Something reaches
+  1249" is not actionable; "item 47, a Text at (-697,-1060)" names the bug.
 
 ## Hard rules (do not violate)
 
@@ -435,6 +548,25 @@ accessible, so any always-on machine on that port gives remote updates safely.
 
 ## Environment note
 
-You can build (`pio run`) but **flashing is the human's job** — they plug the
-Teensy / AtomS3U into their machine and run `pio run -t upload`. Ask them to flash
-and report results; don't assume upload happened.
+**Flashing is no longer the human's job.** The Teensy's front micro-USB jack is
+plugged into a Raspberry Pi CM4 (`kayden@tofu`), which is the always-on machine
+the Teensy-OTA rejection above was waiting for. `display-teensy/flash_remote.sh`
+builds here, copies the hex over and programs it, unattended:
+
+    ./display-teensy/flash_remote.sh          # build + flash the Teensy
+    cd bridge-esp32 && pio run -e atoms3u_ota -t upload   # bridge, over Wi-Fi
+
+Leave the link ~30s to re-claim between the two — reflashing drops the Teensy's
+USB-host port and the device's own 40s-no-claim self-restart is what recovers
+it. Measured at 20-40s in practice.
+
+It does NOT use PJRC's `teensy_reboot`: that is a client of the Teensy Loader
+*GUI*, so it cannot work on a headless box. It uses the 134-baud reboot request
+instead, which is handled in the USB ISR — the same mechanism that recovers a
+hung board, so it works when the main loop does not.
+
+The same cable makes the front-jack console remotely readable, which is where
+debugging should happen (see the rule above about not debugging through the
+bridge):
+
+    ssh kayden@tofu 'stty -F /dev/ttyACM0 115200 raw -echo; timeout 10 cat /dev/ttyACM0'

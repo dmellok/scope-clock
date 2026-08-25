@@ -7,6 +7,8 @@
 #include "hal/link.h"
 #include "nowplaying.h"
 #include "gauges.h"
+#include "radar.h"
+#include "audiofx.h"
 #include "vector.h"
 #include "faces_impl.h"
 #include "hostdata.h"
@@ -101,6 +103,7 @@ void sendStatus(const DeviceState& dev, const ClockState& clk) {
   s.faceId     = dev.faceId;
   s.brightness = dev.brightness;
   s.rtcOk      = clk.rtcPresent ? 1 : 0;
+  s.sleeping   = dev.sleeping ? 1 : 0;
   s.linkSilentS = hal::link::silentSeconds();
   hal::link::send(static_cast<uint8_t>(proto::Msg::Status),
                   reinterpret_cast<const uint8_t*>(&s), sizeof(s));
@@ -213,6 +216,26 @@ void dispatch(uint8_t id, const uint8_t* payload, uint8_t len,
 
     case proto::Msg::SetGauges:
       gauge::set(payload, len);
+      break;
+
+    case proto::Msg::SetRadar:
+      rdr::set(payload, len);
+      break;
+
+    case proto::Msg::SetAudio:
+      afx::setBands(payload, len);
+      break;
+
+    case proto::Msg::SetWave:
+      afx::setWave(payload, len);
+      break;
+
+    case proto::Msg::SetSleep:
+      // 2 (a real power-down) is accepted as 1 rather than rejected: the tube
+      // has no supply to cut, so warm standby is the deepest thing that can
+      // honestly be done, and a host asking for more should get the closest
+      // available state rather than nothing at all.
+      if (len >= 1) dev.sleeping = payload[0] != 0;
       break;
 
     case proto::Msg::SetScales: {

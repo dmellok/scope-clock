@@ -124,11 +124,51 @@ void loop() {
     const uint8_t p = vec::wobble() ? 1 : 0;
     hal::link::send(static_cast<uint8_t>(proto::Msg::EventWobble), &p, 1);
   }
+  // Emitted before the standby return below, or a clock slept at the knob would
+  // never tell the bridge and the next Hello would wake it straight back up.
+  if (dev.sleepChanged) {
+    dev.sleepChanged = false;
+    const uint8_t p = dev.sleeping ? 1 : 0;
+    hal::link::send(static_cast<uint8_t>(proto::Msg::EventSleep), &p, 1);
+  }
   hal::midi::poll();             // 2b. USB-MIDI in (bounded drain, front jack)
   // 2c. anti-burn-in drift, all modes — except while the centring target is up,
   // which is a fixed reference and useless if it wanders.
   vec::holdWobble(dev.mode == Mode::Face && faces::rawScale(dev.faceId));
   vec::tickWobble();
+
+  // Warm standby. Checked BEFORE the audio changeover below, so that sleeping
+  // out of audio mode actually stops the DMA — audio hands it the DACs, and it
+  // would go on driving them behind a blanked beam otherwise. Leaving audio
+  // rather than suspending it is the honest behaviour: the mode is entered from
+  // the console and there is nothing to restore it to.
+  static bool wasSleeping = false;
+  if (dev.sleeping != wasSleeping) {
+    wasSleeping = dev.sleeping;
+    if (dev.sleeping) {
+      if (dev.mode == Mode::Audio) { hal::audio::stop(); dev.mode = Mode::Face; }
+      vec::park();
+    }
+  }
+  if (dev.sleeping) {
+    // Re-parked EVERY iteration, not just on the transition into sleep. It is
+    // three register writes, and it means nothing that touches the DAC or the
+    // blanking pin can leave a lit spot sitting on the phosphor for a whole
+    // night — which is the failure this is guarding against.
+    vec::park();
+    // The tube stays lit and only the beam is off, so the phosphor takes
+    // nothing and waking is the next frame. There is no deeper state reachable
+    // in software: this firmware drives exactly one tube pin and it is the
+    // blanking input. See SetSleep in shared/protocol.h.
+    dev.frameUs = 0;               // no frame was drawn; do not report a stale one
+    heartbeat(dev, clk);
+    // Paced at the refresh rate rather than free-running, for the reason the
+    // audio path spells out: hal::input smooths the pots with an IIR tuned to
+    // ~32 frames and counts polls to debounce the button, so both would behave
+    // quite differently at the ~100kHz this loop reaches when nothing renders.
+    frameSync(dev.hz);
+    return;
+  }
 
   // Audio mode hands the DACs to the audio DMA, so the changeover has to happen
   // exactly on the edge — starting it twice re-runs a 257ms ramp, and failing to
