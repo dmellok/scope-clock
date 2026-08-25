@@ -1,0 +1,25 @@
+# scope-clock radar scanner — runs on the always-on host, not on either MCU.
+#
+# Install on tofu:
+#   sudo cp tools/radar_scan.py /usr/local/bin/radar_scan.py
+#   sudo cp tools/scope-radar.service /etc/systemd/system/
+#   sudo systemctl enable --now scope-radar
+#
+# Credentials come from EnvironmentFile, NOT from this unit: the repo is public
+# and the broker password must not be in it. Create ~/.scope-radar.env with
+# MQTT_HOST / MQTT_PORT / MQTT_USER / MQTT_PASS / MQTT_PREFIX, mode 600.
+[Unit]
+Description=scope-clock radar: scan the LAN and drive the radar face
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kayden
+EnvironmentFile=/home/kayden/.scope-radar.env
+ExecStart=/usr/local/bin/radar_scan.py --interval 30
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
