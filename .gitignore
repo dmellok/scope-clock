@@ -11,3 +11,11 @@
 .env
 .env.*
 !.env.example
+
+# Host harness build output. The SOURCE is committed (see CLAUDE.md — a harness
+# that lives only on one machine evaporates), the binaries are not.
+tools/hostsim/sizeface
+tools/hostsim/thumbs
+tools/websim/websim
+tools/websim/names.h
+*.dSYM/

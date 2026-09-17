@@ -1,0 +1,266 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>scope clock — live sim</title>
+<style>
+  :root {
+    --ink: #9fb3a6; --dim: #5d6f64; --line: #1d2622;
+    --panel: #0e1412; --bg: #070b09; --hot: #7ef2a8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    display: flex; height: 100vh; overflow: hidden;
+  }
+  #stage { flex: 1; display: grid; place-items: center; min-width: 0; padding: 16px; }
+  #tube { border-radius: 50%; background: #000;
+          box-shadow: 0 0 0 10px #12181500, 0 0 90px #0d3a1f88, inset 0 0 60px #000; }
+  aside {
+    width: 300px; flex: none; background: var(--panel);
+    border-left: 1px solid var(--line); padding: 16px; overflow-y: auto;
+  }
+  h1 { font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+       color: var(--hot); margin: 0 0 4px; }
+  .sub { color: var(--dim); margin: 0 0 18px; font-size: 11px; }
+  label { display: block; margin: 14px 0 4px; font-size: 11px;
+          letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  select, input[type=range] { width: 100%; }
+  select {
+    background: #0a100d; color: var(--ink); border: 1px solid var(--line);
+    padding: 6px; font: inherit; border-radius: 4px;
+  }
+  .row { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
+  .row input { accent-color: var(--hot); }
+  .val { float: right; color: var(--ink); text-transform: none; letter-spacing: 0; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+  td { padding: 3px 0; white-space: nowrap; }
+  td:last-child { text-align: right; color: var(--hot); padding-left: 10px; }
+  .warn { color: #f2b47e; }
+  footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line);
+           color: var(--dim); font-size: 11px; }
+</style>
+
+<div id="stage"><canvas id="tube"></canvas></div>
+
+<aside>
+  <h1>scope clock</h1>
+  <p class="sub">The firmware's own render path, against a fake DAC. Every dot
+  here is a dot the beam would put on the phosphor.</p>
+
+  <label>Face</label>
+  <select id="face"></select>
+
+  <label>Face scale <span class="val" id="scaleV">70%</span></label>
+  <input type="range" id="scale" min="20" max="100" value="70">
+
+  <label>Frame step <span class="val" id="stepV">17 ms</span></label>
+  <input type="range" id="step" min="4" max="80" value="17">
+
+  <label>Zoom <span class="val" id="zoomV">1.0x</span></label>
+  <input type="range" id="zoom" min="10" max="80" value="10">
+
+  <label>View</label>
+  <div class="row"><input type="checkbox" id="dots"><span>Show individual dots</span></div>
+  <div class="row"><input type="checkbox" id="jumps"><span>Show blanked jumps</span></div>
+  <div class="row"><input type="checkbox" id="decay" checked><span>Phosphor decay</span></div>
+  <div class="row"><input type="checkbox" id="run" checked><span>Running</span></div>
+
+  <label>This frame</label>
+  <table>
+    <tr><td>lit dots</td><td id="sDots">-</td></tr>
+    <tr><td>strokes</td><td id="sStrokes">-</td></tr>
+    <tr><td>settling</td><td id="sSettle">-</td></tr>
+    <tr><td>worst r</td><td id="sRad">-</td></tr>
+    <tr><td>viewer fps</td><td id="sFps">-</td></tr>
+  </table>
+
+  <footer id="note">Rim is 1800 DAC counts, the measured edge of the glass, and
+  a face is authored to 1200 device units inside it. Settling is strokes x 20us:
+  the cost the dot count does not show, and on the tube it is most of the frame.
+  Frame step is how much clock the sim advances per frame, so it sets how fast
+  animations run rather than how fast the page redraws.</footer>
+</aside>
+
+<script>
+const cv = document.getElementById('tube'), ctx = cv.getContext('2d', { alpha: false });
+const $ = id => document.getElementById(id);
+const RIM = 1800;                 // DAC counts to the edge of the phosphor
+let px = 0;                       // canvas size in CSS pixels
+
+function resize() {
+  const s = Math.min(window.innerWidth - 332, window.innerHeight - 32);
+  const dpr = window.devicePixelRatio || 1;
+  px = Math.max(320, s);
+  cv.style.width = cv.style.height = px + 'px';
+  cv.width = cv.height = Math.round(px * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, px, px);
+}
+window.addEventListener('resize', resize); resize();
+
+// DAC counts (centred, y up on the tube) -> canvas pixels (y down). The zoom
+// is there because at 1:1 the beam's 2-count dot spacing is finer than a
+// screen pixel, so "show individual dots" draws a solid line and proves
+// nothing. Wound in, the spacing is visible, and so is the difference between
+// a stroke the beam crawled along and one it hurried.
+let zoom = 1;
+const m = v => (v / RIM) * (px / 2) * 0.97 * zoom;
+const X = v => px / 2 + m(v);
+const Y = v => px / 2 - m(v);
+
+// Did this stroke put ink outside the glass? Worth seeing where, not just that
+// it happened: a face can measure fine on average and still throw one label
+// past the rim.
+const overRim = s => {
+  for (let j = 0; j < s.length; j += 2)
+    if (s[j] * s[j] + s[j + 1] * s[j + 1] > RIM * RIM) return true;
+  return false;
+};
+
+function draw(f) {
+  if ($('decay').checked) {
+    // Not a clear: the tube's phosphor keeps glowing for a moment after the
+    // beam has gone, and a hard clear every frame loses exactly the streaking
+    // that makes a vector display look like one.
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(0,0,0,0.34)';
+    ctx.fillRect(0, 0, px, px);
+  } else {
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, px, px);
+  }
+
+  ctx.save();
+  // Zoomed in, the picture would otherwise spill out of the round tube and
+  // stop looking like one.
+  if (zoom > 1) {
+    ctx.beginPath();
+    ctx.arc(px / 2, px / 2, px / 2 * 0.97, 0, Math.PI * 2);
+    ctx.clip();
+  }
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineJoin = ctx.lineCap = 'round';
+
+  if ($('jumps').checked) {
+    // The blanked repositions: where the beam flies between strokes with the
+    // Z axis off. Dropping Z means drawing every one of these.
+    ctx.strokeStyle = 'rgba(190,70,70,0.30)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 1; i < f.strokes.length; ++i) {
+      const a = f.strokes[i - 1], b = f.strokes[i];
+      ctx.moveTo(X(a[a.length - 2]), Y(a[a.length - 1]));
+      ctx.lineTo(X(b[0]), Y(b[1]));
+    }
+    ctx.stroke();
+  }
+
+  const groups = [[f.strokes.filter(s => !overRim(s)), false],
+                  [f.strokes.filter(overRim), true]];
+
+  if ($('dots').checked) {
+    // One mark per DAC write, which is what brightness is actually made of:
+    // closely spaced dots read as a bright line, spread ones as a dim one.
+    const r = Math.min(2.2, 0.6 * zoom);
+    for (const [set, bad] of groups) {
+      ctx.fillStyle = bad ? 'rgba(245,175,110,0.9)' : 'rgba(120,245,165,0.85)';
+      for (const s of set)
+        for (let j = 0; j < s.length; j += 2)
+          ctx.fillRect(X(s[j]) - r / 2, Y(s[j + 1]) - r / 2, r, r);
+    }
+  } else {
+    for (const [set, bad] of groups) {
+      const passes = bad ? [[3.4, 'rgba(200,110,30,0.12)'], [1.1, 'rgba(245,185,120,0.85)']]
+                         : [[3.4, 'rgba(30,190,90,0.10)'],  [1.1, 'rgba(110,240,155,0.80)']];
+      for (const [w, col] of passes) {
+        ctx.lineWidth = w; ctx.strokeStyle = col;
+        ctx.beginPath();
+        for (const s of set) {
+          ctx.moveTo(X(s[0]), Y(s[1]));
+          for (let j = 2; j < s.length; j += 2) ctx.lineTo(X(s[j]), Y(s[j + 1]));
+        }
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function parse(buf) {
+  const d = new DataView(buf);
+  const n = d.getUint16(0, true);
+  const f = { strokes: [], dots: d.getUint32(2, true), moves: d.getUint32(6, true),
+              maxR: d.getInt32(10, true) };
+  let o = 18;
+  for (let i = 0; i < n; ++i) {
+    const pts = d.getUint16(o, true); o += 2;
+    const s = new Int16Array(pts * 2);
+    for (let j = 0; j < pts * 2; ++j, o += 2) s[j] = d.getInt16(o, true);
+    f.strokes.push(s);
+  }
+  return f;
+}
+
+let fps = 0, lastT = performance.now(), busy = false;
+
+async function tick() {
+  requestAnimationFrame(tick);
+  if (busy || !$('run').checked) return;
+  busy = true;
+  try {
+    const r = await fetch(`/frame?f=${$('face').value}&s=${$('scale').value}&ms=${$('step').value}`);
+    const f = parse(await r.arrayBuffer());
+    draw(f);
+
+    const now = performance.now();
+    fps = fps * 0.9 + (1000 / Math.max(1, now - lastT)) * 0.1;
+    lastT = now;
+
+    $('sDots').textContent = f.dots.toLocaleString();
+    $('sStrokes').textContent = f.strokes.length;
+    $('sSettle').textContent = (f.strokes.length * 0.02).toFixed(1) + ' ms';
+    const dev = Math.round(f.maxR * 2 / 3);
+    $('sRad').textContent = f.maxR + ' dac / ' + dev + ' dev';
+    $('sRad').className = f.maxR > RIM ? 'warn' : '';
+    $('sFps').textContent = fps.toFixed(0);
+  } catch (e) {
+    $('note').textContent = 'lost the server: ' + e;
+  }
+  busy = false;
+}
+
+(async () => {
+  // Toggles from the query string: ?f=28&dots=1&jumps=1 is then a link to one
+  // particular view, which is also how each drawing mode gets tested.
+  const qs = new URLSearchParams(location.search);
+  for (const k of ['dots', 'jumps', 'decay', 'run'])
+    if (qs.has(k)) $(k).checked = qs.get(k) !== '0';
+  for (const k of ['scale', 'step', 'zoom'])
+    if (qs.has(k)) $(k).value = qs.get(k);
+
+  const list = await (await fetch('/faces')).json();
+  const sel = $('face');
+  let group = null;
+  list.forEach((f, i) => {
+    if (!group || group.label !== f.f) {
+      group = document.createElement('optgroup');
+      group.label = f.f; sel.appendChild(group);
+    }
+    const o = document.createElement('option');
+    o.value = i; o.textContent = f.n;
+    group.appendChild(o);
+  });
+  // Wipe on a face change rather than letting the decay cross-fade two faces
+  // into each other, which reads as a rendering fault.
+  sel.onchange = () => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, px, px); };
+  if (qs.has('f')) sel.value = qs.get('f');
+  $('scale').oninput = () => $('scaleV').textContent = $('scale').value + '%';
+  $('step').oninput  = () => $('stepV').textContent  = $('step').value + ' ms';
+  $('zoom').oninput  = () => {
+    zoom = $('zoom').value / 10;
+    $('zoomV').textContent = zoom.toFixed(1) + 'x';
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, px, px);
+  };
+  $('scale').oninput(); $('step').oninput(); $('zoom').oninput();
+  tick();
+})();
+</script>

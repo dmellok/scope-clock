@@ -1,5 +1,0 @@
----
-triple:          'arm64-apple-darwin'
-binary-path:     '/Users/kayden/Documents/PlatformIO/Projects/scope-clock/tools/hostsim/sizeface'
-relocations:     []
-...

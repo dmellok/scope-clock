@@ -254,6 +254,16 @@ clone it alongside.
   `gauges` to the device registry and forgetting the bridge's table cost a flash
   cycle: the picker showed 27 faces and neither new one could be selected. The
   checker names it in one line and needs no hardware.
+- **A harness must compose the frame in the DEVICE'S ORDER, or it lies.**
+  `main.cpp` runs `txt::centerLines()` between the face and `scaleList()`, and
+  `thumbs.cpp` never did. Faces that place their own coordinates were fine, so
+  it looked fine — but every face that stacks rows at (0,0) and lets the layout
+  position them had its items land on top of each other and right of centre.
+  The shipped previews of `digital`, `datetime` and `wordclock` were wrong for
+  as long as they had existed, and nobody spotted it because a small unreadable
+  blob is what a seven-segment thumbnail sort of looks like. Found by putting
+  the same frame on a big canvas in `websim`. Both harnesses call it now.
+
 - **Device units are NOT DAC counts, and the tube's radius is ~1800.** Measured,
   not assumed: push concentric rings (`C 0 0 600` … `C 0 0 1800`) and look. Every
   face here is authored against a 1200-unit working edge, so `vec::` scales by
@@ -478,6 +488,23 @@ untrusted bytes become a structure.
 existed. If you add a measurement harness, commit it.
 
     ./tools/hostsim/build.sh && ./tools/hostsim/sizeface
+
+There is a LIVE one too, `tools/websim`, which serves the same beam path to a
+browser instead of printing numbers about it:
+
+    ./tools/websim/build.sh && ./tools/websim/websim
+
+then open `http://localhost:8080/` — or the machine's LAN address from a phone
+or another desk, since it binds 0.0.0.0. It is a native binary with a ~120-line
+HTTP server rather than WebAssembly on purpose: nothing to install, and it
+builds on the Pi. Face picker, per-face scale, a zoom (at 1:1 the 2-count dot
+spacing is finer than a screen pixel, so "show dots" draws a solid line and
+proves nothing), phosphor decay, and two views worth knowing about — ink that
+lands outside the 1800-count rim is drawn AMBER, and "show blanked jumps" draws
+the retraces in red, which is what dropping the Z axis would cost you.
+
+Both harnesses render through the real `hal::dac` seam, so anything that draws
+here draws on the tube.
 
 `sizeface` sweeps 1100 frames and reports the worst frame, because one sample is
 not enough — the tesseract and the tunnel both ran off the tube only partway

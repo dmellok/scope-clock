@@ -25,12 +25,13 @@ echo "built $HERE/sizeface"
 
 # The thumbnail generator links EVERY face, which needs the whole face set plus
 # the small stores the host-fed ones read from. hal::midi is stubbed inside
-# thumbs.cpp; it is the only HAL a face touches.
+# seed.cpp; it is the only HAL a face touches, and seed.cpp also carries the
+# host-fed fixtures the faces draw from.
 $CXX -std=c++17 -O2 -g \
   -I "$HERE" -I "$HERE/fake" \
   -I "$ROOT/display-teensy/include" -I "$ROOT/shared" \
   -o "$HERE/thumbs" \
-  "$HERE/thumbs.cpp" "$HERE/sim.cpp" \
+  "$HERE/thumbs.cpp" "$HERE/sim.cpp" "$HERE/seed.cpp" \
   "$SRC/vector.cpp" "$SRC/text.cpp" "$SRC/drawlist.cpp" "$SRC/faces.cpp" \
   "$SRC"/faces_*.cpp \
   "$SRC/gauges.cpp" "$SRC/nowplaying.cpp" "$SRC/hostdata.cpp" "$SRC/zones.cpp" \
