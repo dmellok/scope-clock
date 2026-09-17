@@ -503,6 +503,18 @@ proves nothing), phosphor decay, and two views worth knowing about — ink that
 lands outside the 1800-count rim is drawn AMBER, and "show blanked jumps" draws
 the retraces in red, which is what dropping the Z axis would cost you.
 
+The same viewer also builds to WebAssembly, which is what makes it something
+you can hand to a stranger rather than a repo they have to build:
+
+    ./tools/websim/build_wasm.sh        # needs emscripten; CI has it
+
+`.github/workflows/pages.yml` runs that on every push to main and publishes
+`tools/websim/dist` to <https://dmellok.github.io/scope-clock/>. The page picks
+its transport at load — the wasm module if it is there, the HTTP server if it is
+not — so `index.html` is one file and the two paths cannot drift. The build is
+CI's job because emscripten is a gigabyte nobody should need in order to change
+a face, and a committed wasm blob would be re-committed on every edit.
+
 Both harnesses render through the real `hal::dac` seam, so anything that draws
 here draws on the tube.
 

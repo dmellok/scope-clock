@@ -1,0 +1,74 @@
+# Publish the live face viewer to GitHub Pages.
+#
+# The point of building it here rather than committing the output: emscripten
+# is a ~1GB toolchain that nobody should have to install to change a face, and
+# a wasm blob in the tree would be re-committed on every edit. CI runs
+# tools/websim/build_wasm.sh — the same script as a local build, not a second
+# recipe that can drift from it.
+#
+# Pages must be set to "GitHub Actions" in the repo settings for this to have
+# anywhere to deploy to; that is a one-time click, not something a workflow can
+# do for itself.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    # The viewer is the render path plus the bridge's face table, so those are
+    # what make it stale. Anything else on main does not need a rebuild.
+    paths:
+      - 'display-teensy/src/**'
+      - 'display-teensy/include/**'
+      - 'tools/websim/**'
+      - 'tools/hostsim/sim.*'
+      - 'tools/hostsim/seed.*'
+      - 'tools/hostsim/fake/**'
+      - 'bridge-esp32/src/main.cpp'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A deploy already under way should finish; a newer commit supersedes a queued
+# one rather than both racing to publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          actions-cache-folder: emsdk-cache
+
+      # The registry and the bridge's face table have to agree or the picker
+      # names the wrong faces. Cheap, needs no hardware, and a published viewer
+      # that lies about which face is which is worse than a failed build.
+      - name: Check the face tables still match
+        run: python3 tools/check_faces.py
+
+      - name: Build the viewer
+        run: ./tools/websim/build_wasm.sh
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: tools/websim/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

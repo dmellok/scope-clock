@@ -74,7 +74,7 @@
     <tr><td>viewer fps</td><td id="sFps">-</td></tr>
   </table>
 
-  <footer id="note">Rim is 1800 DAC counts, the measured edge of the glass, and
+  <footer id="note"><span id="how">connecting</span>. Rim is 1800 DAC counts, the measured edge of the glass, and
   a face is authored to 1200 device units inside it. Settling is strokes x 20us:
   the cost the dot count does not show, and on the tube it is most of the frame.
   Frame step is how much clock the sim advances per frame, so it sets how fast
@@ -200,6 +200,33 @@ function parse(buf) {
   return f;
 }
 
+// ---- the two transports ----------------------------------------------------
+// Served by tools/websim/websim, the frames come down a socket. Built to
+// WebAssembly, the same C++ runs in this tab and hands back a pointer into its
+// heap. Everything above this line only ever calls getFaces() and getFrame(),
+// so the viewer is one page either way.
+let getFaces, getFrame;
+
+async function connect() {
+  if (typeof createWebsim === 'function') {
+    const M = await createWebsim();
+    M._ws_init();
+    getFaces = async () => JSON.parse(M.UTF8ToString(M._ws_faces_json()));
+    getFrame = async (f, s, ms) => {
+      const p = M._ws_frame(f, s, ms), n = M._ws_frame_len();
+      // Copied out immediately: the heap buffer is reused by the next frame,
+      // and growing the heap would detach any view we kept.
+      return M.HEAPU8.buffer.slice(p, p + n);
+    };
+    document.getElementById('how').textContent = 'running in this tab (wasm)';
+  } else {
+    getFaces = async () => (await fetch('/faces')).json();
+    getFrame = async (f, s, ms) =>
+      (await fetch(`/frame?f=${f}&s=${s}&ms=${ms}`)).arrayBuffer();
+    document.getElementById('how').textContent = 'served by websim';
+  }
+}
+
 let fps = 0, lastT = performance.now(), busy = false;
 
 async function tick() {
@@ -207,8 +234,7 @@ async function tick() {
   if (busy || !$('run').checked) return;
   busy = true;
   try {
-    const r = await fetch(`/frame?f=${$('face').value}&s=${$('scale').value}&ms=${$('step').value}`);
-    const f = parse(await r.arrayBuffer());
+    const f = parse(await getFrame(+$('face').value, +$('scale').value, +$('step').value));
     draw(f);
 
     const now = performance.now();
@@ -223,12 +249,14 @@ async function tick() {
     $('sRad').className = f.maxR > RIM ? 'warn' : '';
     $('sFps').textContent = fps.toFixed(0);
   } catch (e) {
-    $('note').textContent = 'lost the server: ' + e;
+    $('note').textContent = 'stopped: ' + e;
+    $('run').checked = false;
   }
   busy = false;
 }
 
 (async () => {
+  await connect();
   // Toggles from the query string: ?f=28&dots=1&jumps=1 is then a link to one
   // particular view, which is also how each drawing mode gets tested.
   const qs = new URLSearchParams(location.search);
@@ -237,7 +265,7 @@ async function tick() {
   for (const k of ['scale', 'step', 'zoom'])
     if (qs.has(k)) $(k).value = qs.get(k);
 
-  const list = await (await fetch('/faces')).json();
+  const list = await getFaces();
   const sel = $('face');
   let group = null;
   list.forEach((f, i) => {

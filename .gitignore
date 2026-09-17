@@ -19,3 +19,6 @@ tools/hostsim/thumbs
 tools/websim/websim
 tools/websim/names.h
 *.dSYM/
+
+# Built by tools/websim/build_wasm.sh; published by CI, not committed.
+tools/websim/dist/
